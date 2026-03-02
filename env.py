@@ -5,6 +5,7 @@ import cv2
 from datetime import datetime
 from math import cos, sin, radians, sqrt
 import json
+import hashlib
 
 class RobotExplorationEnv:
     def __init__(self,
@@ -16,7 +17,8 @@ class RobotExplorationEnv:
                  wheel_base=4.0, wheel_radius=0.75, dt=0.2,
                  linear_speed=15.0, angular_speed=1.0,
                  output_dir=None, render=False,
-                 strategy_name="unknown", strategy_parameters=None):
+                 strategy_name="unknown", strategy_parameters=None,
+                 cache_size=1000):  # New parameter for cache size
 
         # ------------------------------------------------------------------
         # 1. Load the image **first**
@@ -57,6 +59,7 @@ class RobotExplorationEnv:
         self.ray_length = ray_length
         self.max_steps = max_steps
         self.render_flag = render
+        self.cache_size = cache_size  # Maximum number of cached readings
         
         # Robot parameters
         self.wheel_base = wheel_base
@@ -95,9 +98,74 @@ class RobotExplorationEnv:
         self.clock = None
         self.pygame = None
         
+        # NEW: LIDAR cache
+        self.lidar_cache = {}  # Dictionary: key -> (intersections, timestamp)
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.cache_evictions = 0
+        
         # Save metadata immediately
         self._save_metadata()
 
+    def _get_cache_key(self, x, y, orientation):
+        """
+        Generate a cache key from robot position and orientation.
+        Uses quantization to handle floating point precision and similar positions.
+        """
+        # Quantize to reduce cache size and handle similar positions
+        quantize_factor = 1  # Adjust based on your needs (1 = no quantization)
+        
+        qx = round(x / quantize_factor) * quantize_factor
+        qy = round(y / quantize_factor) * quantize_factor
+        qo = round(orientation / 5) * 5  # Quantize orientation to nearest 5 degrees
+        
+        # Create a hash for faster dictionary lookups
+        key_str = f"{qx:.1f}_{qy:.1f}_{qo:.1f}"
+        return hashlib.md5(key_str.encode()).hexdigest()
+
+    def _get_cached_lidar(self, robot_x, robot_y, orientation):
+        """
+        Get LIDAR readings from cache if available, otherwise compute them.
+        """
+        cache_key = self._get_cache_key(robot_x, robot_y, orientation)
+        
+        if cache_key in self.lidar_cache:
+            self.cache_hits += 1
+            intersections, _ = self.lidar_cache[cache_key]
+            return intersections.copy()  # Return a copy to prevent modification
+        
+        self.cache_misses += 1
+        
+        # Compute LIDAR readings
+        intersections = self._compute_lidar_rays(robot_x, robot_y, orientation)
+        
+        # Manage cache size (LRU-like behavior with simple timestamp)
+        if len(self.lidar_cache) >= self.cache_size:
+            # Remove oldest entry (simple approach)
+            oldest_key = min(self.lidar_cache.keys(), 
+                           key=lambda k: self.lidar_cache[k][1])
+            del self.lidar_cache[oldest_key]
+            self.cache_evictions += 1
+        
+        # Store in cache with timestamp
+        self.lidar_cache[cache_key] = (intersections, self.current_step)
+        
+        return intersections 
+
+    def get_cache_stats(self):
+        """Return cache performance statistics"""
+        total = self.cache_hits + self.cache_misses
+        hit_rate = self.cache_hits / total if total > 0 else 0
+        return {
+            "hits": self.cache_hits,
+            "misses": self.cache_misses,
+            "hit_rate": hit_rate,
+            "evictions": self.cache_evictions,
+            "current_size": len(self.lidar_cache),
+            "max_size": self.cache_size
+        }
+
+    # [All other methods remain exactly the same as before]
     def _save_metadata(self):
         """Save comprehensive run metadata before starting"""
         metadata = {
@@ -112,7 +180,8 @@ class RobotExplorationEnv:
                 "num_rays": self.num_rays,
                 "ray_length": self.ray_length,
                 "max_steps": self.max_steps,
-                "map_image": os.path.basename(self.map_image_path)
+                "map_image": os.path.basename(self.map_image_path),
+                "cache_size": self.cache_size  # Added cache info to metadata
             },
             "output_directory": self.output_dir
         }
@@ -137,9 +206,14 @@ class RobotExplorationEnv:
         
         # Initialize log buffer
         self.log_buffer = []
+        
+        # NEW: Clear cache on reset (optional - depends on your needs)
+        self.lidar_cache.clear()
+        self.cache_hits = 0
+        self.cache_misses = 0
+        self.cache_evictions = 0
 
         return self._get_observation()
-
     def _find_free_position(self, start_x, start_y, max_radius=100):
         """Find a free position for the robot starting from given coordinates"""
         for radius in range(0, max_radius, 5):
@@ -189,12 +263,15 @@ class RobotExplorationEnv:
             v_left = -self.linear_speed / 4 # negative because of image coordinates 
             v_right = +self.linear_speed / 4 
 
+        # Store old position for cache invalidation if needed
+        old_x, old_y, old_orientation = self.robot_x, self.robot_y, self.robot_orientation
+
         # Update robot position
         self.robot_x, self.robot_y, self.robot_orientation = self._update_robot_position(
             self.robot_x, self.robot_y, self.robot_orientation, v_left, v_right
         )
 
-        # Cast LIDAR once
+        # Cast LIDAR using cached version
         intersections = self.cast_lidar_rays_optimized(
             self.robot_x, self.robot_y, self.robot_orientation
         )
@@ -215,7 +292,16 @@ class RobotExplorationEnv:
         # Step bookkeeping
         self.current_step += 1
         done = self.current_step >= self.max_steps
-        info = {"new_cells": new_cells, "coverage": self._get_coverage(), "action": action, "reward": reward}
+        info = {
+            "new_cells": new_cells, 
+            "coverage": self._get_coverage(), 
+            "action": action, 
+            "reward": reward,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "cache_evictions": self.cache_evictions,
+            "cache_size": len(self.lidar_cache)
+        }
 
         return obs, reward, done, info
 
@@ -291,11 +377,20 @@ class RobotExplorationEnv:
                 writer.writerow(header)
                 writer.writerows(self.log_buffer)
         
+        # Log cache statistics at the end
+        if hasattr(self, 'cache_hits'):
+            stats = self.get_cache_stats()
+            print(f"[INFO] Cache statistics: {stats}")
+            
+            # Save cache stats to file
+            stats_path = os.path.join(self.output_dir, "cache_stats.json")
+            with open(stats_path, 'w') as f:
+                json.dump(stats, f, indent=4)
+        
         if self._pygame_initialized and self.screen:
             self.pygame.quit()
             self.screen = None
 
-    # Internal helper functions
     def _update_robot_position(self, x, y, orientation, v_left, v_right):
         linear_velocity = (v_left + v_right) / 2 * self.wheel_radius
         angular_velocity = (v_right - v_left) / self.wheel_base * self.wheel_radius
@@ -337,15 +432,27 @@ class RobotExplorationEnv:
             )
 
     def cast_lidar_rays_optimized(self, robot_x, robot_y, orientation, num_rays=None, max_range=None):
-        """Optimized LIDAR using Bresenham's line algorithm"""
+        """
+        Public method that uses cache for LIDAR readings.
+        Maintains backward compatibility.
+        """
+        if num_rays is not None or max_range is not None:
+            # If parameters differ from defaults, don't use cache
+            return self._compute_lidar_rays(robot_x, robot_y, orientation, num_rays, max_range)
+        
+        return self._get_cached_lidar(robot_x, robot_y, orientation)
+    
+    def _compute_lidar_rays(self, robot_x, robot_y, orientation, num_rays=None, max_range=None):
+        """
+        Original LIDAR computation logic (renamed from cast_lidar_rays_optimized)
+        """
         if num_rays is None:
             num_rays = self.num_rays
         if max_range is None:
             max_range = self.ray_length
             
         intersections = []
-        angles = self.robot_orientation + self.lidar_angles
-
+        angles = orientation + self.lidar_angles
         
         for angle_deg in angles:
             angle_rad = np.radians(angle_deg)
@@ -454,8 +561,6 @@ class RobotExplorationEnv:
                             new_cells += 1
 
         return new_cells
-
-
 
     def _draw_map(self, pygame):
         """Simple drawing that shows exploration progress"""

@@ -15,7 +15,8 @@ class RandomWalkStrategy(BaseStrategy):
             obs, reward, done, info = env.step(action)
             env.render()
             
-            print(f"Step {env.current_step}, Action: {info['action']}, New cells: {reward}, Coverage: {info['coverage']:.2f}%")
+            if env.current_step % 50 == 0:
+                print(f"Step {env.current_step}, Action: {info['action']}")
             
             # Uncomment to slow down
             # await asyncio.sleep(1.0 / env.fps)
