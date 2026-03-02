@@ -175,10 +175,8 @@ class RobotExplorationEnv:
     def step(self, action, extra_info=None):
         if not 0 <= action <= 3:
             raise ValueError("Action must be 0-3")
-        
-        if extra_info is None:
-            extra_info = {}
-        
+        extra_info = extra_info or {}
+
         # Map action to left/right wheel velocities
         if action == 0:  # up
             v_left = v_right = self.linear_speed
@@ -196,16 +194,32 @@ class RobotExplorationEnv:
             self.robot_x, self.robot_y, self.robot_orientation, v_left, v_right
         )
 
-        # Update map with LIDAR
-        intersections, new_cells = self._update_map()
+        # Cast LIDAR once
+        intersections = self.cast_lidar_rays_optimized(
+            self.robot_x, self.robot_y, self.robot_orientation
+        )
 
-        # Get observation
+        # Update map only if rendering (reuse intersections)
+        new_cells = 0
+        if self.render_flag:
+            new_cells = self._update_map(intersections=intersections)
+
+        # Observation
         obs = self._get_observation(intersections)
 
-        # Calculate Reward
+        # Reward
         reward = self._calculate_reward()
 
-        # Log data
+        self._log_step(action, intersections, reward, extra_info)
+
+        # Step bookkeeping
+        self.current_step += 1
+        done = self.current_step >= self.max_steps
+        info = {"new_cells": new_cells, "coverage": self._get_coverage(), "action": action, "reward": reward}
+
+        return obs, reward, done, info
+
+    def _log_step(self, action, intersections, reward, extra_info):
         lidar_distances = [sqrt((inter[0] - self.robot_x)**2 + (inter[1] - self.robot_y)**2) if inter else self.ray_length
                         for inter in intersections]
         
@@ -219,30 +233,24 @@ class RobotExplorationEnv:
         ] + lidar_distances + [
             self.episode,
             reward,
-            self.robot_x, 
-            self.robot_y, 
+            self.robot_x,
+            self.robot_y,
             self.robot_orientation
         ]
         
         self.log_buffer.append(row)
 
-        # Save when buffer reaches 100 steps
+        # Save buffer periodically
         if len(self.log_buffer) == 100:
-            intermediate_path = os.path.join(self.output_dir, f"log_{self.current_step + 1}.csv")
+            path = os.path.join(self.output_dir, f"log_{self.current_step + 1}.csv")
             header = ['step', 'strategy', 'action', 'run_start', 'run_length'] + \
-                     [f'ray_{i}' for i in range(self.num_rays)] + \
-                     ['episode', 'reward', 'x', 'y', 'orientation']
-                     
-            with open(intermediate_path, 'w', newline='') as f:
+                    [f'ray_{i}' for i in range(self.num_rays)] + \
+                    ['episode', 'reward', 'x', 'y', 'orientation']
+            with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow(header)
                 writer.writerows(self.log_buffer)
-            self.log_buffer = []  # Clear buffer after saving
-
-        self.current_step += 1
-        done = self.current_step >= self.max_steps
-        info = {"new_cells": new_cells, "coverage": self._get_coverage(), "action": action, "reward": reward}
-        return obs, reward, done, info
+            self.log_buffer = []
 
     def render(self):
         if not self.render_flag:
@@ -405,14 +413,13 @@ class RobotExplorationEnv:
         """Calculate percentage of explored cells (free + obstacle). 0 - free, 1 - obstacle, -1 - unexplored"""
         return 100 * np.sum(self.exploration_grid >= 0) / (self.grid_width * self.grid_height)
 
-    def _update_map(self):
-        """Update exploration grid with latest LIDAR scan."""
-        angles = np.linspace(self.robot_orientation - 45, self.robot_orientation + 45, self.num_rays)
-        intersections = self.cast_lidar_rays_optimized(
-            self.robot_x, self.robot_y, self.robot_orientation
-        )
-
+    def _update_map(self, intersections):
+        """
+        Update exploration grid using precomputed LIDAR intersections.
+        Only called if rendering/logging is needed.
+        """
         new_cells = 0
+        angles = np.linspace(self.robot_orientation - 45, self.robot_orientation + 45, self.num_rays)
 
         for angle_deg, inter in zip(angles, intersections):
             angle_rad = np.radians(angle_deg)
@@ -421,33 +428,33 @@ class RobotExplorationEnv:
                 # Ray hit obstacle → mark obstacle and free path
                 ox, oy = int(inter[0]), int(inter[1])
 
-                # Free path up to obstacle
+                # Mark free path to obstacle
                 line_points = self._bresenham_line(int(self.robot_x), int(self.robot_y), ox, oy)
                 for px, py in line_points[:-1]:
-                    if (0 <= px < self.grid_width and 0 <= py < self.grid_height and
-                        self.exploration_grid[px, py] == -1):
-                        self.exploration_grid[px, py] = 0
+                    if 0 <= px < self.grid_width and 0 <= py < self.grid_height:
+                        if self.exploration_grid[px, py] == -1:
+                            self.exploration_grid[px, py] = 0
+                            new_cells += 1
+
+                # Mark obstacle
+                if 0 <= ox < self.grid_width and 0 <= oy < self.grid_height:
+                    if self.exploration_grid[ox, oy] == -1:
+                        self.exploration_grid[ox, oy] = 1
                         new_cells += 1
-
-                # Mark obstacle cell
-                if (0 <= ox < self.grid_width and 0 <= oy < self.grid_height and
-                    self.exploration_grid[ox, oy] == -1):
-                    self.exploration_grid[ox, oy] = 1
-                    new_cells += 1
-
             else:
-                # No obstacle hit → mark full ray as free
+                # No intersection → mark full ray as free
                 end_x = int(self.robot_x + self.ray_length * np.cos(angle_rad))
                 end_y = int(self.robot_y + self.ray_length * np.sin(angle_rad))
                 line_points = self._bresenham_line(int(self.robot_x), int(self.robot_y), end_x, end_y)
 
                 for px, py in line_points:
-                    if (0 <= px < self.grid_width and 0 <= py < self.grid_height and
-                        self.exploration_grid[px, py] == -1):
-                        self.exploration_grid[px, py] = 0
-                        new_cells += 1
+                    if 0 <= px < self.grid_width and 0 <= py < self.grid_height:
+                        if self.exploration_grid[px, py] == -1:
+                            self.exploration_grid[px, py] = 0
+                            new_cells += 1
 
-        return intersections, new_cells
+        return new_cells
+
 
 
     def _draw_map(self, pygame):
