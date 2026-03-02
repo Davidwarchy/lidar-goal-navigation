@@ -109,19 +109,23 @@ async def main():
     print(f"Max steps: {args.max_steps}")
     print(f"Output dir: {env.output_dir}")
 
+    # Record start time
     start_time = time.time()
 
     # Run simulation
     steps, coverage = await strategy.run(env)
 
+    # Calculate elapsed time and time per step
     elapsed = time.time() - start_time
-    time_per_100 = (elapsed / max(steps, 1)) * 100
+    time_per_step = elapsed / steps if steps > 0 else 0
+    steps_per_second = steps / elapsed if elapsed > 0 else 0
 
     print("\n=== Simulation Complete ===")
     print(f"Coverage: {coverage:.2f}%")
-    print(f"Steps: {steps}")
-    print(f"Time: {elapsed:.3f}s total")
-    print(f"Time per 100 steps: {time_per_100:.4f}s")
+    print(f"Steps taken: {steps}")
+    print(f"Total time: {elapsed:.3f}s")
+    print(f"Time per step: {time_per_step*1000:.2f}ms")
+    print(f"Steps per second: {steps_per_second:.2f}")
     print(f"Saved to: {env.output_dir}")
 
     env.close()
@@ -129,5 +133,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
+    
     # example command: python main.py --strategy random --max_steps 1000 --env 6.png
