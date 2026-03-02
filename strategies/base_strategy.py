@@ -6,7 +6,7 @@ class BaseStrategy(ABC):
         self.parameters = parameters or {}
     
     @abstractmethod
-    async def run(self, env):
+    def run(self, env):
         """Run the strategy with the given environment"""
         pass
     

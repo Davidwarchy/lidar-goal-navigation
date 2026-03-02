@@ -1,5 +1,4 @@
 import random
-import asyncio
 import numpy as np
 from .base_strategy import BaseStrategy
 
@@ -25,7 +24,7 @@ class LevyWalkStrategy(BaseStrategy):
             x = self.min_step * (1 - u)**(-1.0 / self.alpha)
         return int(max(1, round(x)))
     
-    async def run(self, env):
+    def run(self, env):
         obs = env.reset()
         done = False
 
@@ -67,6 +66,5 @@ class LevyWalkStrategy(BaseStrategy):
                 )
 
             # Uncomment to slow down
-            # await asyncio.sleep(1.0 / env.fps)
 
         return env.current_step, env._get_coverage()

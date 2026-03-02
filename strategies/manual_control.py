@@ -1,12 +1,11 @@
 import pygame
-import asyncio
 from .base_strategy import BaseStrategy
 
 class ManualControlStrategy(BaseStrategy):
     def __init__(self):
         super().__init__("manual_control", {})
     
-    async def run(self, env):
+    def run(self, env):
         obs = env.reset()
         done = False
         print("Manual control: hold arrow keys to move. Press ESC to quit.")
@@ -41,6 +40,6 @@ class ManualControlStrategy(BaseStrategy):
                 print(f"Step {env.current_step}, Action: {info['action']}, "
                       f"New cells: {reward}, Coverage: {info['coverage']:.2f}%")
 
-            await asyncio.sleep(1.0 / env.fps)
+            env.clock.tick(env.fps)
 
         return env.current_step, env._get_coverage()

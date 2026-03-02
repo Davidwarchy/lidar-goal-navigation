@@ -1,5 +1,4 @@
 import random
-import asyncio
 import numpy as np
 from .base_strategy import BaseStrategy
 
@@ -24,7 +23,7 @@ class UniformRunLengthStrategy(BaseStrategy):
         # inclusive integer uniform sample
         return int(random.randint(self.min_step, self.max_step))
 
-    async def run(self, env):
+    def run(self, env):
         obs = env.reset()
         done = False
 
@@ -66,6 +65,5 @@ class UniformRunLengthStrategy(BaseStrategy):
                 )
 
             # Optional slowdown (commented)
-            # await asyncio.sleep(1.0 / env.fps)
 
         return env.current_step, env._get_coverage()

@@ -1,5 +1,4 @@
 import argparse
-import asyncio
 import os
 import sys
 import time
@@ -82,7 +81,7 @@ def parse_args():
     return parser.parse_args()
 
 
-async def main():
+def main():
     args = parse_args()
 
     if args.strategy == "manual":
@@ -109,13 +108,10 @@ async def main():
     print(f"Max steps: {args.max_steps}")
     print(f"Output dir: {env.output_dir}")
 
-    # Record start time
     start_time = time.time()
 
-    # Run simulation
-    steps, coverage = await strategy.run(env)
+    steps, coverage = strategy.run(env)
 
-    # Calculate elapsed time and time per step
     elapsed = time.time() - start_time
     time_per_step = elapsed / steps if steps > 0 else 0
     steps_per_second = steps / elapsed if elapsed > 0 else 0
@@ -132,6 +128,6 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
-    
+    main()
+
     # example command: python main.py --strategy random --max_steps 1000 --env 6.png
