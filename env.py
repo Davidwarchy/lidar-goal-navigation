@@ -240,11 +240,6 @@ class RobotExplorationEnv:
                             return False
         return True
 
-    def _calculate_reward(self):
-        """
-        Base reward function. Override in subclasses (e.g. BlobEnv) for RL.
-        """
-        return 0.0
 
     def step(self, action, extra_info=None):
         if not 0 <= action <= 3:
@@ -284,8 +279,8 @@ class RobotExplorationEnv:
         # Observation
         obs = self._get_observation(intersections)
 
-        # Reward
-        reward = self._calculate_reward()
+        # Reward (required for RL, can be overridden in subclass)
+        reward = 0 
 
         self._log_step(action, intersections, reward, extra_info)
 
