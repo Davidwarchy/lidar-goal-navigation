@@ -444,35 +444,64 @@ class RobotExplorationEnv:
     
     def _compute_lidar_rays(self, robot_x, robot_y, orientation, num_rays=None, max_range=None):
         """
-        Original LIDAR computation logic (renamed from cast_lidar_rays_optimized)
+        Fully vectorized LIDAR ray marching.
+        No Bresenham.
+        No Python loops over pixels.
+        Fast.
         """
         if num_rays is None:
             num_rays = self.num_rays
         if max_range is None:
             max_range = self.ray_length
-            
-        intersections = []
-        angles = orientation + self.lidar_angles
-        
-        for angle_deg in angles:
-            angle_rad = np.radians(angle_deg)
-            end_x = int(robot_x + max_range * np.cos(angle_rad))
-            end_y = int(robot_y + max_range * np.sin(angle_rad))
-            
-            line_points = self._bresenham_line(int(robot_x), int(robot_y), end_x, end_y)
-            
-            closest_intersection = None
-            for point in line_points:
-                x, y = point
-                if not (0 <= x < self.map_width and 0 <= y < self.map_height):
-                    break
-                    
-                if self.obstacle_map[y, x] == 1:
-                    closest_intersection = (x, y)
-                    break
-            
-            intersections.append(closest_intersection)
-        
+
+        # Compute ray angles
+        angles = orientation + np.linspace(-45, 45, num_rays)
+        angles_rad = np.radians(angles)
+
+        # Unit direction vectors for all rays
+        dx = np.cos(angles_rad)
+        dy = np.sin(angles_rad)
+
+        # March distances from 0 to max_range (exclusive, since step=1 approximates)
+        steps = np.arange(0, max_range)
+
+        # Expand for broadcasting: shape (num_rays, max_range)
+        ray_x = robot_x + np.outer(dx, steps)
+        ray_y = robot_y + np.outer(dy, steps)
+
+        # Truncate to integer grid coordinates
+        ray_x = ray_x.astype(np.int32)
+        ray_y = ray_y.astype(np.int32)
+
+        # Validity mask to ignore out-of-bounds
+        valid_mask = (
+            (ray_x >= 0) &
+            (ray_x < self.map_width) &
+            (ray_y >= 0) &
+            (ray_y < self.map_height)
+        )
+
+        # Clip coordinates for safe indexing (prevents index errors)
+        ray_x_clip = np.clip(ray_x, 0, self.map_width - 1)
+        ray_y_clip = np.clip(ray_y, 0, self.map_height - 1)
+
+        # Fetch obstacle hits in one batched operation
+        hits_raw = self.obstacle_map[ray_y_clip, ray_x_clip]
+        hits = (hits_raw == 1) & valid_mask
+
+        # Find index of first hit per ray (argmax on bool returns index of first True)
+        hit_indices = np.argmax(hits, axis=1)
+
+        # Check if there was actually a hit (avoids false positives where argmax=0 but no hit)
+        has_hit = np.any(hits, axis=1)
+
+        # Build intersections list
+        intersections = [None] * num_rays
+        for i in range(num_rays):
+            if has_hit[i]:
+                idx = hit_indices[i]
+                intersections[i] = (ray_x[i, idx], ray_y[i, idx])
+
         return intersections
 
     def _bresenham_line(self, x0, y0, x1, y1):
