@@ -1,0 +1,24 @@
+I think that we want to have a problem like this. 
+
+A survival object. It must be found for survival of the robot. 
+
+- Robot: 2 wheels, 4 lidar rays; predefined energy. Every step costs 1 energy point; reward is getting to within 2 units of the goal. 
+
+We have a bunch of neurons connected up: 
+- 4 input 
+- 2 output 
+
+Our system must in a way be capable of search and find, but let's not explicitly program that 
+
+We have a starting point. 
+
+We also have an ending point. If we are successful with the preconfigured endpoint, we can change things up to see if we can create an even more flexible system. Otherwise we might just be ""mastering the environment". 
+
+We want to implement a natural selection system for our system, to see whether it successfully implements our survival system. 
+
+My theory is that we are creating a system that's capable of SEARCH. And depending on how we define our reward, it could be: 
+- By proximity (where the robot might learn to explore spaces thoroughly - example if we define our survival elements by proximity... ie, when we say that we only get a reward if we are 2 units near the reward)  
+- By sight (where the robot might learn to explore by sight - if we define our fitness object as something which can be seen from far, eg, when we have an object perceptible by lidar)
+
+We don't have any feedback for fitness in real evolution. 
+
