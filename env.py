@@ -19,6 +19,7 @@ except ModuleNotFoundError as e:
 
 import os
 import csv
+import random
 
 try:
     import cv2
@@ -26,7 +27,7 @@ except ModuleNotFoundError as e:
     raise ModuleNotFoundError(_dep_error_message("opencv-python (import name: cv2)")) from e
 
 from datetime import datetime
-from math import cos, sin, radians
+from math import cos, sin, radians, sqrt
 import json
 from collections import OrderedDict
 
@@ -87,6 +88,14 @@ class RobotExplorationEnv:
         self.render_flag = render
         self.cache_size = cache_size
         
+        # Survival/Goal parameters
+        self.energy = self.max_steps
+        self.health = 200
+        self.goal_x = None
+        self.goal_y = None
+        self.goal_success_dist = 1.0 
+        self.goal_spawn_dist = 5.0 
+
         # Enable coverage if render enabled (because coverage updates are expensive and only needed for visualization/logging)
         self.enable_coverage = self.render_flag
         
@@ -205,7 +214,8 @@ class RobotExplorationEnv:
                 "ray_length": self.ray_length,
                 "max_steps": self.max_steps,
                 "map_image": os.path.basename(self.map_image_path),
-                "cache_size": self.cache_size  # Added cache info to metadata
+                "cache_size": self.cache_size,
+                "goal_location": {"x": self.goal_x, "y": self.goal_y}
             },
             "output_directory": self.output_dir
         }
@@ -222,6 +232,12 @@ class RobotExplorationEnv:
         self.robot_orientation = 0
         self.current_step = 0
         
+        # Survival Reset
+        self.energy = self.max_steps
+        self.health = 200
+        self.goal_x, self.goal_y = self._spawn_reward(self.robot_x, self.robot_y, self.goal_spawn_dist)
+        self._save_metadata()
+
         # Increment episode count
         self.episode += 1
 
@@ -237,6 +253,22 @@ class RobotExplorationEnv:
         self.cache_evictions = 0
 
         return self._get_observation()
+
+    def _spawn_reward(self, start_x, start_y, distance):
+        """Finds a free position approximately 'distance' units away for the survival object"""
+        for _ in range(200):
+            angle = random.uniform(0, 2 * np.pi)
+            tx = start_x + distance * np.cos(angle)
+            ty = start_y + distance * np.sin(angle)
+            if (0 <= tx < self.map_width and 0 <= ty < self.map_height and 
+                self.obstacle_map[round(ty), round(tx)] == 0):
+                return tx, ty
+        return start_x, start_y
+
+    def _check_goal_reached(self):
+        """Check if robot is within the success distance of the reward"""
+        dist = sqrt((self.robot_x - self.goal_x)**2 + (self.robot_y - self.goal_y)**2)
+        return dist <= self.goal_success_dist
 
     def _find_free_position(self, start_x, start_y, max_radius=100):
         for radius in range(0, max_radius, 5):
@@ -290,17 +322,30 @@ class RobotExplorationEnv:
 
         # Observation
         obs = self._get_observation(intersections, distances)
-        # Reward (required for RL, can be overridden in subclass)
-        reward = 0 
+        
+        # Reward logic: Check if goal is reached
+        goal_reached = self._check_goal_reached()
+        reward = 1.0 if goal_reached else 0.0
 
         # Step bookkeeping
         self.current_step += 1
-        done = self.current_step >= self.max_steps
+        self.energy -= 1
+        
+        done = (self.energy <= 0 or self.health <= 0 or 
+                self.current_step >= self.max_steps or goal_reached)
+        
         info = {
             "new_cells": new_cells, 
             "coverage": self._get_coverage(), 
+            "health": self.health,
+            "energy": self.energy,
+            "goal_reached": goal_reached,
             "action": action
         }
+
+        if done: 
+            print(f"[INFO] Episode {self.episode} ended. Steps: {self.current_step}, Reward: {reward}, Coverage: {info['coverage']:.2f}%, Health: {self.health}, Energy: {self.energy}")
+            exit()
 
         return obs, reward, done, info
 
@@ -326,6 +371,7 @@ class RobotExplorationEnv:
         
         self.screen.fill((255, 255, 255))
         self._draw_map(self.pygame)
+        self._draw_reward(self.pygame)
         self._draw_robot(self.pygame)
         self._draw_lidar(self.pygame)
         self.pygame.display.flip()
@@ -356,8 +402,15 @@ class RobotExplorationEnv:
         new_orientation = (orientation + angular_velocity * self.dt) % 360
         
         if not self._is_position_free(new_x, new_y):
+            self.health -= 1
             return x, y, orientation
         return new_x, new_y, new_orientation
+
+    def _draw_reward(self, pygame):
+        """Draw the survival object"""
+        if self.goal_x is not None:
+            gx, gy = int(self.goal_x * self.scale), int(self.goal_y * self.scale)
+            pygame.draw.circle(self.screen, (0, 0, 255), (gx, gy), int(3 * self.scale))
 
     def _draw_lidar(self, pygame):
         intersections, _ = self.cast_lidar_rays_optimized(self.robot_x, self.robot_y, self.robot_orientation)
