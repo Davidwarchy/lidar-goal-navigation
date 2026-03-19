@@ -17,6 +17,4 @@ class RandomWalkStrategy(BaseStrategy):
             if env.current_step % 100 == 0:
                 print(f"Step {env.current_step}, Action: {info['action']}")
             
-            # Uncomment to slow down
-        
         return env.current_step, env._get_coverage()
