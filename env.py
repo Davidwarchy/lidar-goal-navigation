@@ -145,7 +145,10 @@ class RobotExplorationEnv:
         self.cache_hits = 0
         self.cache_misses = 0
         self.cache_evictions = 0
-        
+
+        self._steps = np.arange(0, self.ray_length)
+        self._base_angles = np.linspace(-45, 45, self.num_rays)
+    
         # Save metadata immediately
         self._save_metadata()
 
@@ -267,8 +270,9 @@ class RobotExplorationEnv:
 
     def _check_goal_reached(self):
         """Check if robot is within the success distance of the reward"""
-        dist = sqrt((self.robot_x - self.goal_x)**2 + (self.robot_y - self.goal_y)**2)
-        return dist <= self.goal_success_dist
+        dx = self.robot_x - self.goal_x
+        dy = self.robot_y - self.goal_y
+        return dx*dx + dy*dy <= self.goal_success_dist ** 2
 
     def _find_free_position(self, start_x, start_y, max_radius=100):
         for radius in range(0, max_radius, 5):
@@ -449,19 +453,16 @@ class RobotExplorationEnv:
             max_range = self.ray_length
 
         # Compute ray angles
-        angles = orientation + np.linspace(-45, 45, num_rays)
-        angles_rad = np.radians(angles)
+        angles_rad = np.radians(orientation + self._base_angles)
 
         # Unit direction vectors for all rays
         dx = np.cos(angles_rad)
         dy = np.sin(angles_rad)
 
-        # March distances from 0 to max_range (exclusive, since step=1 approximates)
-        steps = np.arange(0, max_range)
-
-        # Expand for broadcasting: shape (num_rays, max_range)
-        ray_x = robot_x + np.outer(dx, steps)
-        ray_y = robot_y + np.outer(dy, steps)
+            # Expand for broadcasting: shape (num_rays, max_range)
+        ray_x = robot_x + np.outer(dx, self._steps)
+        
+        ray_y = robot_y + np.outer(dy, self._steps)
 
         # Truncate to integer grid coordinates
         ray_x = ray_x.astype(np.int32)
