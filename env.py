@@ -343,10 +343,6 @@ class RobotExplorationEnv:
             "action": action
         }
 
-        if done: 
-            print(f"[INFO] Episode {self.episode} ended. Steps: {self.current_step}, Reward: {reward}, Coverage: {info['coverage']:.2f}%, Health: {self.health}, Energy: {self.energy}")
-            exit()
-
         return obs, reward, done, info
 
     def render(self):
@@ -405,12 +401,6 @@ class RobotExplorationEnv:
             self.health -= 1
             return x, y, orientation
         return new_x, new_y, new_orientation
-
-    def _draw_reward(self, pygame):
-        """Draw the survival object"""
-        if self.goal_x is not None:
-            gx, gy = int(self.goal_x * self.scale), int(self.goal_y * self.scale)
-            pygame.draw.circle(self.screen, (0, 0, 255), (gx, gy), int(3 * self.scale))
 
     def _draw_lidar(self, pygame):
         intersections, _ = self.cast_lidar_rays_optimized(self.robot_x, self.robot_y, self.robot_orientation)
@@ -678,3 +668,9 @@ class RobotExplorationEnv:
         
         # Draw robot center
         pygame.draw.circle(self.screen, (255, 255, 0), (display_x, display_y), 3)
+
+    def _draw_reward(self, pygame):
+        """Draw the survival object"""
+        if self.goal_x is not None:
+            gx, gy = int(self.goal_x * self.scale), int(self.goal_y * self.scale)
+            pygame.draw.circle(self.screen, (0, 0, 255), (gx, gy), int(self.goal_success_dist * self.scale))
