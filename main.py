@@ -37,6 +37,17 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None):
         from strategies.uniform import UniformRunLengthStrategy
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
+    if name == "spike_nn":
+        from strategies import SpikeNNGeneticStrategy
+        return SpikeNNGeneticStrategy(
+            population_size=20,
+            generations=10,
+            energy_per_agent=100,
+            elite_count=3,
+            mutation_rate=0.1,
+            weights_dir="spike_weights"
+        )
+
 
     raise ValueError(f"Unknown strategy: {name}")
 
@@ -48,7 +59,7 @@ def parse_args():
         "--strategy",
         type=str,
         default="random",
-        choices=["random", "levy", "manual", "levy_custom", "uniform"],
+        choices=["random", "levy", "manual", "levy_custom", "uniform", "spike_nn"],
         help="Exploration strategy"
     )
 
