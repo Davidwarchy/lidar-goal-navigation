@@ -94,7 +94,7 @@ class RobotExplorationEnv:
         self.goal_x = None
         self.goal_y = None
         self.goal_success_dist = 1.0 
-        self.goal_spawn_dist = 5.0 
+        self.goal_spawn_dist = 30.0 
 
         # Enable coverage if render enabled (because coverage updates are expensive and only needed for visualization/logging)
         self.enable_coverage = self.render_flag
@@ -263,9 +263,22 @@ class RobotExplorationEnv:
             angle = random.uniform(0, 2 * np.pi)
             tx = start_x + distance * np.cos(angle)
             ty = start_y + distance * np.sin(angle)
-            if (0 <= tx < self.map_width and 0 <= ty < self.map_height and 
-                self.obstacle_map[round(ty), round(tx)] == 0):
+            
+            # Safely round to nearest pixel integer
+            ix, iy = int(round(tx)), int(round(ty))
+            
+            # Ensure strictly within array bounds before checking obstacle map
+            if (0 <= ix < self.map_width and 0 <= iy < self.map_height and 
+                self.obstacle_map[iy, ix] == 0):
                 return tx, ty
+                
+        # If we failed to find a valid spot after 200 tries (e.g., map is too small), 
+        # recursively decrease the distance by 10.0 and try again until we find a free spot.
+        if distance > 10.0:
+            new_distance = distance - 10.0
+            print(f"[WARNING] Could not spawn reward at distance {distance:.1f}. Decreasing to {new_distance:.1f}...")
+            return self._spawn_reward(start_x, start_y, new_distance)
+            
         return start_x, start_y
 
     def _check_goal_reached(self):

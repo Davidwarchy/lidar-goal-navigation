@@ -16,8 +16,16 @@ def get_map_path(env_filename):
     return os.path.join(IMAGES_DIR, env_filename)
 
 
-def load_strategy(name, alpha=None, min_step=None, max_step=None):
+def load_strategy(name, alpha=None, min_step=None, max_step=None, population_size=100, num_generations=30, load_weights=None):
     """Load strategy class based on name."""
+    if name == "ga":
+        from strategies.genetic_algorithm import GeneticAlgorithmStrategy
+        return GeneticAlgorithmStrategy(
+            population_size=population_size, 
+            num_generations=num_generations, 
+            load_weights=load_weights
+        )
+
     if name == "random":
         from strategies.random_walk import RandomWalkStrategy
         return RandomWalkStrategy()
@@ -48,7 +56,7 @@ def parse_args():
         "--strategy",
         type=str,
         default="random",
-        choices=["random", "levy", "manual", "levy_custom", "uniform"],
+        choices=["random", "levy", "manual", "levy_custom", "uniform", "ga"],
         help="Exploration strategy"
     )
 
@@ -69,6 +77,11 @@ def parse_args():
     parser.add_argument("--alpha", type=float, default=1.6)
     parser.add_argument("--min_step", type=float, default=1.0)
     parser.add_argument("--max_step_len", type=float, default=200.0)
+
+    # GA parameters
+    parser.add_argument("--population", type=int, default=100, help="Population size for GA")
+    parser.add_argument("--generations", type=int, default=30, help="Number of generations for GA")
+    parser.add_argument("--load_weights", type=str, default=None, help="Path to a previous generation's weights directory to continue training")
 
     # New argument: choose environment
     parser.add_argument(
@@ -91,7 +104,10 @@ def main():
         args.strategy,
         alpha=args.alpha,
         min_step=args.min_step,
-        max_step=args.max_step_len
+        max_step=args.max_step_len,
+        population_size=args.population,
+        num_generations=args.generations,
+        load_weights=args.load_weights
     )
 
     env = RobotExplorationEnv(
