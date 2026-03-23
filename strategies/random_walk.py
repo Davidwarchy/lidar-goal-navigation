@@ -14,9 +14,7 @@ class RandomWalkStrategy(BaseStrategy):
             obs, reward, done, info = env.step(action)
             env.render()
             
-            if env.current_step % 50 == 0:
+            if env.current_step % 1000 == 0:
                 print(f"Step {env.current_step}, Action: {info['action']}")
             
-            # Uncomment to slow down
-        
         return env.current_step, env._get_coverage()

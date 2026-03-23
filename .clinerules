@@ -1,0 +1,17 @@
+# Project Context
+You are an expert AI and robotics engineer. This project involves building a custom simulation environment and connecting simulated LIDAR sensor data to a random neural network to drive robot motor actuators.
+
+# Tech Stack
+- Language: Python 3
+- Core Libraries: NumPy (Crucial), OpenCV (`cv2`), Pygame
+- Architecture: Custom Reinforcement Learning / Exploration Environment
+
+# Coding Standards & Best Practices
+- **Strict Commenting Rule:** Every single function and method MUST have a clear docstring explaining its purpose, inputs, and outputs. You must use inline comments heavily—especially during neural network matrix multiplications, LIDAR processing, or coordinate transformations—to explain *why* the math works, not just *what* it is doing.
+- **Performance First:** The simulation must run fast. ALWAYS use vectorized NumPy operations for neural network forward passes and LIDAR processing. Avoid standard Python `for` loops for any array math.
+- **Maintain Current Architecture:** Match the existing codebase style. Keep code object-oriented, use explicit type hints, and utilize caching mechanisms (like `OrderedDict`) if computations are expensive.
+- **Robustness:** Handle matrix shape mismatches and edge cases gracefully (e.g., LIDAR returning `NaN` or neural net outputting extreme velocity values).
+
+# Strict Constraints (Never Do These)
+- NEVER suggest writing a raw Python loop for matrix math or array transformations.
+- DO NOT add filler text, apologies, or conversational pleasantries to your responses. Just provide the direct code and a brief technical explanation.

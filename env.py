@@ -1,11 +1,35 @@
-import numpy as np
+import sys
+
+def _dep_error_message(missing_import: str) -> str:
+    pyver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+    base = [
+        f"Missing dependency: {missing_import!r}.",
+        "",
+        "Install dependencies with:",
+        "  python -m pip install -r requirements.txt",
+        "",
+        f"Detected Python: {pyver}",
+    ]
+    return "\n".join(base)
+
+try:
+    import numpy as np
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(_dep_error_message("numpy")) from e
+
 import os
 import csv
-import cv2
+import random
+
+try:
+    import cv2
+except ModuleNotFoundError as e:
+    raise ModuleNotFoundError(_dep_error_message("opencv-python (import name: cv2)")) from e
+
 from datetime import datetime
 from math import cos, sin, radians, sqrt
 import json
-import hashlib
+from collections import OrderedDict
 
 class RobotExplorationEnv:
     def __init__(self,
@@ -18,7 +42,8 @@ class RobotExplorationEnv:
                  linear_speed=15.0, angular_speed=1.0,
                  output_dir=None, render=False,
                  strategy_name="unknown", strategy_parameters=None,
-                 cache_size=1000):  # New parameter for cache size
+                 cache_size=1000,
+                 enable_coverage=False): 
 
         # ------------------------------------------------------------------
         # 1. Load the image **first**
@@ -46,11 +71,13 @@ class RobotExplorationEnv:
         # ------------------------------------------------------------------
         _, self.obstacle_map = cv2.threshold(self.map_image,
                                              127, 1, cv2.THRESH_BINARY_INV)
+        free_space_mask = (self.obstacle_map == 0).astype(np.uint8)
+        self.distance_map = cv2.distanceTransform(free_space_mask, cv2.DIST_L2, 5)
 
         # ------------------------------------------------------------------
         # 4. Parameters
         # ------------------------------------------------------------------
-        self.map_height, self.map_width = self.map_image.shape   # now = grid size
+        self.map_height, self.map_width = self.map_image.shape
         self.scale = scale
         self.window_width  = self.grid_width  * scale
         self.window_height = self.grid_height * scale
@@ -59,9 +86,24 @@ class RobotExplorationEnv:
         self.ray_length = ray_length
         self.max_steps = max_steps
         self.render_flag = render
-        self.cache_size = cache_size  # Maximum number of cached readings
+        self.cache_size = cache_size
         
-        # Robot parameters
+        # Survival/Goal parameters
+        self.energy = self.max_steps
+        self.health = 200
+        self.goal_x = None
+        self.goal_y = None
+        self.goal_success_dist = 1.0 
+        self.goal_spawn_dist = 30.0 
+
+        # Enable coverage if render enabled (because coverage updates are expensive and only needed for visualization/logging)
+        self.enable_coverage = self.render_flag
+        
+        # Coarse grid for coverage (divide indices by 2)
+        self.cov_scale = 2
+        self.cov_width = self.grid_width // self.cov_scale
+        self.cov_height = self.grid_height // self.cov_scale
+        
         self.wheel_base = wheel_base
         self.wheel_radius = wheel_radius
         self.dt = dt
@@ -98,12 +140,15 @@ class RobotExplorationEnv:
         self.clock = None
         self.pygame = None
         
-        # NEW: LIDAR cache
-        self.lidar_cache = {}  # Dictionary: key -> (intersections, timestamp)
+        # LIDAR cache
+        self.lidar_cache = OrderedDict()
         self.cache_hits = 0
         self.cache_misses = 0
         self.cache_evictions = 0
-        
+
+        self._steps = np.arange(0, self.ray_length)
+        self._base_angles = np.linspace(-45, 45, self.num_rays)
+    
         # Save metadata immediately
         self._save_metadata()
 
@@ -113,15 +158,10 @@ class RobotExplorationEnv:
         Uses quantization to handle floating point precision and similar positions.
         """
         # Quantize to reduce cache size and handle similar positions
-        quantize_factor = 1  # Adjust based on your needs (1 = no quantization)
-        
-        qx = round(x / quantize_factor) * quantize_factor
-        qy = round(y / quantize_factor) * quantize_factor
-        qo = round(orientation / 5) * 5  # Quantize orientation to nearest 5 degrees
-        
-        # Create a hash for faster dictionary lookups
-        key_str = f"{qx:.1f}_{qy:.1f}_{qo:.1f}"
-        return hashlib.md5(key_str.encode()).hexdigest()
+        qx = int(round(x))
+        qy = int(round(y))
+        qo = int(round(orientation / 5) * 5)
+        return (qx, qy, qo)
 
     def _get_cached_lidar(self, robot_x, robot_y, orientation):
         """
@@ -131,26 +171,23 @@ class RobotExplorationEnv:
         
         if cache_key in self.lidar_cache:
             self.cache_hits += 1
-            intersections, _ = self.lidar_cache[cache_key]
-            return intersections.copy()  # Return a copy to prevent modification
+            self.lidar_cache.move_to_end(cache_key)
+            # Unpack intersections and precomputed distances
+            cached_inter, cached_dist = self.lidar_cache[cache_key]
+            return list(cached_inter), cached_dist.copy()  # Return a copy to prevent modification
         
         self.cache_misses += 1
-        
-        # Compute LIDAR readings
-        intersections = self._compute_lidar_rays(robot_x, robot_y, orientation)
+        # Compute LIDAR readings and distances
+        intersections, distances = self._compute_lidar_rays(robot_x, robot_y, orientation)
         
         # Manage cache size (LRU-like behavior with simple timestamp)
         if len(self.lidar_cache) >= self.cache_size:
-            # Remove oldest entry (simple approach)
-            oldest_key = min(self.lidar_cache.keys(), 
-                           key=lambda k: self.lidar_cache[k][1])
-            del self.lidar_cache[oldest_key]
+            self.lidar_cache.popitem(last=False)
             self.cache_evictions += 1
         
         # Store in cache with timestamp
-        self.lidar_cache[cache_key] = (intersections, self.current_step)
-        
-        return intersections 
+        self.lidar_cache[cache_key] = (intersections, distances)
+        return intersections, distances
 
     def get_cache_stats(self):
         """Return cache performance statistics"""
@@ -165,7 +202,6 @@ class RobotExplorationEnv:
             "max_size": self.cache_size
         }
 
-    # [All other methods remain exactly the same as before]
     def _save_metadata(self):
         """Save comprehensive run metadata before starting"""
         metadata = {
@@ -181,7 +217,8 @@ class RobotExplorationEnv:
                 "ray_length": self.ray_length,
                 "max_steps": self.max_steps,
                 "map_image": os.path.basename(self.map_image_path),
-                "cache_size": self.cache_size  # Added cache info to metadata
+                "cache_size": self.cache_size,
+                "goal_location": {"x": self.goal_x, "y": self.goal_y}
             },
             "output_directory": self.output_dir
         }
@@ -198,12 +235,17 @@ class RobotExplorationEnv:
         self.robot_orientation = 0
         self.current_step = 0
         
+        # Survival Reset
+        self.energy = self.max_steps
+        self.health = 200
+        self.goal_x, self.goal_y = self._spawn_reward(self.robot_x, self.robot_y, self.goal_spawn_dist)
+        self._save_metadata()
+
         # Increment episode count
         self.episode += 1
 
-        # Initialize exploration grid
-        self.exploration_grid = np.full((self.grid_width, self.grid_height), -1, dtype=int) 
-        
+        # Coarse coverage grid initialization
+        self.exploration_grid = np.full((self.cov_width, self.cov_height), -1, dtype=int) 
         # Initialize log buffer
         self.log_buffer = []
         
@@ -214,14 +256,43 @@ class RobotExplorationEnv:
         self.cache_evictions = 0
 
         return self._get_observation()
+
+    def _spawn_reward(self, start_x, start_y, distance):
+        """Finds a free position approximately 'distance' units away for the survival object"""
+        for _ in range(200):
+            angle = random.uniform(0, 2 * np.pi)
+            tx = start_x + distance * np.cos(angle)
+            ty = start_y + distance * np.sin(angle)
+            
+            # Safely round to nearest pixel integer
+            ix, iy = int(round(tx)), int(round(ty))
+            
+            # Ensure strictly within array bounds before checking obstacle map
+            if (0 <= ix < self.map_width and 0 <= iy < self.map_height and 
+                self.obstacle_map[iy, ix] == 0):
+                return tx, ty
+                
+        # If we failed to find a valid spot after 200 tries (e.g., map is too small), 
+        # recursively decrease the distance by 10.0 and try again until we find a free spot.
+        if distance > 10.0:
+            new_distance = distance - 10.0
+            print(f"[WARNING] Could not spawn reward at distance {distance:.1f}. Decreasing to {new_distance:.1f}...")
+            return self._spawn_reward(start_x, start_y, new_distance)
+            
+        return start_x, start_y
+
+    def _check_goal_reached(self):
+        """Check if robot is within the success distance of the reward"""
+        dx = self.robot_x - self.goal_x
+        dy = self.robot_y - self.goal_y
+        return dx*dx + dy*dy <= self.goal_success_dist ** 2
+
     def _find_free_position(self, start_x, start_y, max_radius=100):
-        """Find a free position for the robot starting from given coordinates"""
         for radius in range(0, max_radius, 5):
             for angle in np.linspace(0, 2*np.pi, 36):
                 x = int(start_x + radius * np.cos(angle))
                 y = int(start_y + radius * np.sin(angle))
-                if (0 <= x < self.map_width and 0 <= y < self.map_height and 
-                    self._is_position_free(x, y)):
+                if self._is_position_free(x, y):
                     return x, y
         # Fallback to start position if no free position found
         print("[WARNING] No free position found within radius, using start coordinates")
@@ -229,21 +300,13 @@ class RobotExplorationEnv:
 
     def _is_position_free(self, x, y):
         """Check if position is free of obstacles considering robot radius"""
-        # Check robot center and surrounding area
-        check_radius = self.robot_radius
-        for dx in range(-check_radius, check_radius + 1):
-            for dy in range(-check_radius, check_radius + 1):
-                if dx*dx + dy*dy <= check_radius*check_radius: # pythagorean check for circular area
-                    check_x, check_y = int(x + dx), int(y + dy)
-                    if (0 <= check_x < self.map_width and 0 <= check_y < self.map_height):
-                        if self.obstacle_map[check_y, check_x] == 1:
-                            return False
-        return True
 
+        ix, iy = int(x), int(y)
+        if not (0 <= ix < self.map_width and 0 <= iy < self.map_height):
+            return False
+        return self.distance_map[iy, ix] >= self.robot_radius
 
     def step(self, action, extra_info=None):
-        if not 0 <= action <= 3:
-            raise ValueError("Action must be 0-3")
         extra_info = extra_info or {}
 
         # Map action to left/right wheel velocities
@@ -258,80 +321,46 @@ class RobotExplorationEnv:
             v_left = -self.linear_speed / 4 # negative because of image coordinates 
             v_right = +self.linear_speed / 4 
 
-        # Store old position for cache invalidation if needed
-        old_x, old_y, old_orientation = self.robot_x, self.robot_y, self.robot_orientation
-
         # Update robot position
         self.robot_x, self.robot_y, self.robot_orientation = self._update_robot_position(
             self.robot_x, self.robot_y, self.robot_orientation, v_left, v_right
         )
 
         # Cast LIDAR using cached version
-        intersections = self.cast_lidar_rays_optimized(
+        intersections, distances = self.cast_lidar_rays_optimized(
             self.robot_x, self.robot_y, self.robot_orientation
         )
 
-        # Update map only if rendering (reuse intersections)
-        new_cells = 0
-        if self.render_flag:
+        # IDEA 1A: Throttle expensive map updates or disable entirely via flag
+        if self.enable_coverage and self.current_step % 5 == 0:
             new_cells = self._update_map(intersections=intersections)
+        else:
+            new_cells = 0
 
         # Observation
-        obs = self._get_observation(intersections)
-
-        # Reward (required for RL, can be overridden in subclass)
-        reward = 0 
-
-        self._log_step(action, intersections, reward, extra_info)
+        obs = self._get_observation(intersections, distances)
+        
+        # Reward logic: Check if goal is reached
+        goal_reached = self._check_goal_reached()
+        reward = 1.0 if goal_reached else 0.0
 
         # Step bookkeeping
         self.current_step += 1
-        done = self.current_step >= self.max_steps
+        self.energy -= 1
+        
+        done = (self.energy <= 0 or self.health <= 0 or 
+                self.current_step >= self.max_steps or goal_reached)
+        
         info = {
             "new_cells": new_cells, 
             "coverage": self._get_coverage(), 
-            "action": action, 
-            "reward": reward,
-            "cache_hits": self.cache_hits,
-            "cache_misses": self.cache_misses,
-            "cache_evictions": self.cache_evictions,
-            "cache_size": len(self.lidar_cache)
+            "health": self.health,
+            "energy": self.energy,
+            "goal_reached": goal_reached,
+            "action": action
         }
 
         return obs, reward, done, info
-
-    def _log_step(self, action, intersections, reward, extra_info):
-        lidar_distances = [sqrt((inter[0] - self.robot_x)**2 + (inter[1] - self.robot_y)**2) if inter else self.ray_length
-                        for inter in intersections]
-        
-        # Row Order: step, strategy, action, run_start, run_length, [lidar], episode, reward, x, y, orientation
-        row = [
-            self.current_step,
-            self.strategy_name,
-            action,
-            extra_info.get('run_start', ''),
-            extra_info.get('run_length', '')
-        ] + lidar_distances + [
-            self.episode,
-            reward,
-            self.robot_x,
-            self.robot_y,
-            self.robot_orientation
-        ]
-        
-        self.log_buffer.append(row)
-
-        # Save buffer periodically
-        if len(self.log_buffer) == 100:
-            path = os.path.join(self.output_dir, f"log_{self.current_step + 1}.csv")
-            header = ['step', 'strategy', 'action', 'run_start', 'run_length'] + \
-                    [f'ray_{i}' for i in range(self.num_rays)] + \
-                    ['episode', 'reward', 'x', 'y', 'orientation']
-            with open(path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
-                writer.writerows(self.log_buffer)
-            self.log_buffer = []
 
     def render(self):
         if not self.render_flag:
@@ -355,23 +384,13 @@ class RobotExplorationEnv:
         
         self.screen.fill((255, 255, 255))
         self._draw_map(self.pygame)
+        self._draw_reward(self.pygame)
         self._draw_robot(self.pygame)
         self._draw_lidar(self.pygame)
         self.pygame.display.flip()
         self.clock.tick(self.fps)
 
     def close(self):
-        # Save any remaining steps in the buffer
-        if self.log_buffer:
-            final_path = os.path.join(self.output_dir, f"log_{self.current_step}.csv")
-            header = ['step', 'strategy', 'action', 'run_start', 'run_length'] + \
-                     [f'ray_{i}' for i in range(self.num_rays)] + \
-                     ['episode', 'reward', 'x', 'y', 'orientation']
-            with open(final_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(header)
-                writer.writerows(self.log_buffer)
-        
         # Log cache statistics at the end
         if hasattr(self, 'cache_hits'):
             stats = self.get_cache_stats()
@@ -395,16 +414,13 @@ class RobotExplorationEnv:
         new_y = y + linear_velocity * sin(radians(orientation)) * self.dt
         new_orientation = (orientation + angular_velocity * self.dt) % 360
         
-        if self._check_collision(new_x, new_y):
+        if not self._is_position_free(new_x, new_y):
+            self.health -= 1
             return x, y, orientation
         return new_x, new_y, new_orientation
 
-    def _check_collision(self, x, y):
-        """Check if robot at position (x,y) collides with obstacles"""
-        return not self._is_position_free(x, y)
-
     def _draw_lidar(self, pygame):
-        intersections = self.cast_lidar_rays_optimized(self.robot_x, self.robot_y, self.robot_orientation)
+        intersections, _ = self.cast_lidar_rays_optimized(self.robot_x, self.robot_y, self.robot_orientation)
         angles = self.robot_orientation + self.lidar_angles
         
         for i, (inter, angle_deg) in enumerate(zip(intersections, angles)):
@@ -450,19 +466,16 @@ class RobotExplorationEnv:
             max_range = self.ray_length
 
         # Compute ray angles
-        angles = orientation + np.linspace(-45, 45, num_rays)
-        angles_rad = np.radians(angles)
+        angles_rad = np.radians(orientation + self._base_angles)
 
         # Unit direction vectors for all rays
         dx = np.cos(angles_rad)
         dy = np.sin(angles_rad)
 
-        # March distances from 0 to max_range (exclusive, since step=1 approximates)
-        steps = np.arange(0, max_range)
-
-        # Expand for broadcasting: shape (num_rays, max_range)
-        ray_x = robot_x + np.outer(dx, steps)
-        ray_y = robot_y + np.outer(dy, steps)
+            # Expand for broadcasting: shape (num_rays, max_range)
+        ray_x = robot_x + np.outer(dx, self._steps)
+        
+        ray_y = robot_y + np.outer(dy, self._steps)
 
         # Truncate to integer grid coordinates
         ray_x = ray_x.astype(np.int32)
@@ -492,12 +505,17 @@ class RobotExplorationEnv:
 
         # Build intersections list
         intersections = [None] * num_rays
+        
+        # IDEA 2C: Precompute exact distances using the hit indices directly
+        distances = np.full(num_rays, max_range, dtype=np.float32)
+
         for i in range(num_rays):
             if has_hit[i]:
                 idx = hit_indices[i]
                 intersections[i] = (ray_x[i, idx], ray_y[i, idx])
+                distances[i] = idx # step index == pixel distance 
 
-        return intersections
+        return intersections, distances
 
     def _bresenham_line(self, x0, y0, x1, y1):
         """Bresenham's line algorithm for efficient pixel traversal"""
@@ -530,19 +548,48 @@ class RobotExplorationEnv:
         points.append((x, y))
         return points
 
-    def _get_observation(self, intersections=None):
+    def _get_observation(self, intersections=None, distances=None):
         """Get LIDAR distances as observation"""
+        # IDEA 2C: Instantly return the precomputed distance array without calculating 
+        if distances is not None:
+            return distances
+
         if intersections is None:
-            intersections = self.cast_lidar_rays_optimized(
+            intersections, distances = self.cast_lidar_rays_optimized(
                 self.robot_x, self.robot_y, self.robot_orientation
             )
-        distances = [sqrt((inter[0] - self.robot_x)**2 + (inter[1] - self.robot_y)**2) if inter else self.ray_length
-                     for inter in intersections]
-        return np.array(distances, dtype=np.float32)
+            return distances
+
+        # IDEA 2B: Fallback to Vectorized NumPy if only intersections are supplied
+        xs, ys, mask = [], [], []
+        for inter in intersections:
+            if inter is None:
+                xs.append(0.0)
+                ys.append(0.0)
+                mask.append(False)
+            else:
+                xs.append(inter[0])
+                ys.append(inter[1])
+                mask.append(True)
+                
+        xs = np.array(xs, dtype=np.float32)
+        ys = np.array(ys, dtype=np.float32)
+        mask = np.array(mask, dtype=bool)
+
+        dx = xs - self.robot_x
+        dy = ys - self.robot_y
+        d = np.empty_like(dx)
+        
+        d[mask] = np.sqrt(dx[mask] * dx[mask] + dy[mask] * dy[mask])
+        d[~mask] = self.ray_length
+        return d
 
     def _get_coverage(self):
         """Calculate percentage of explored cells (free + obstacle). 0 - free, 1 - obstacle, -1 - unexplored"""
-        return 100 * np.sum(self.exploration_grid >= 0) / (self.grid_width * self.grid_height)
+        # Coverage derived from coarse grid (Idea 1D)
+        if not self.enable_coverage:
+            return 0.0
+        return 100 * np.sum(self.exploration_grid >= 0) / (self.cov_width * self.cov_height)
 
     def _update_map(self, intersections):
         """
@@ -550,38 +597,42 @@ class RobotExplorationEnv:
         Only called if rendering/logging is needed.
         """
         new_cells = 0
+        
+        # IDEA 1C: Use fewer rays for coverage (skip by step=4)
+        ray_step = 4
         angles = np.linspace(self.robot_orientation - 45, self.robot_orientation + 45, self.num_rays)
 
-        for angle_deg, inter in zip(angles, intersections):
-            angle_rad = np.radians(angle_deg)
+        for i in range(0, len(intersections), ray_step):
+            inter = intersections[i]
+            angle_rad = np.radians(angles[i])
 
             if inter is not None:
-                # Ray hit obstacle → mark obstacle and free path
                 ox, oy = int(inter[0]), int(inter[1])
-
-                # Mark free path to obstacle
                 line_points = self._bresenham_line(int(self.robot_x), int(self.robot_y), ox, oy)
+                
                 for px, py in line_points[:-1]:
-                    if 0 <= px < self.grid_width and 0 <= py < self.grid_height:
-                        if self.exploration_grid[px, py] == -1:
-                            self.exploration_grid[px, py] = 0
+                    # IDEA 1D: Coarse grid division
+                    cx, cy = px // self.cov_scale, py // self.cov_scale
+                    if 0 <= cx < self.cov_width and 0 <= cy < self.cov_height:
+                        if self.exploration_grid[cx, cy] == -1:
+                            self.exploration_grid[cx, cy] = 0
                             new_cells += 1
 
-                # Mark obstacle
-                if 0 <= ox < self.grid_width and 0 <= oy < self.grid_height:
-                    if self.exploration_grid[ox, oy] == -1:
-                        self.exploration_grid[ox, oy] = 1
+                cx, cy = ox // self.cov_scale, oy // self.cov_scale
+                if 0 <= cx < self.cov_width and 0 <= cy < self.cov_height:
+                    if self.exploration_grid[cx, cy] == -1:
+                        self.exploration_grid[cx, cy] = 1
                         new_cells += 1
             else:
-                # No intersection → mark full ray as free
                 end_x = int(self.robot_x + self.ray_length * np.cos(angle_rad))
                 end_y = int(self.robot_y + self.ray_length * np.sin(angle_rad))
                 line_points = self._bresenham_line(int(self.robot_x), int(self.robot_y), end_x, end_y)
 
                 for px, py in line_points:
-                    if 0 <= px < self.grid_width and 0 <= py < self.grid_height:
-                        if self.exploration_grid[px, py] == -1:
-                            self.exploration_grid[px, py] = 0
+                    cx, cy = px // self.cov_scale, py // self.cov_scale
+                    if 0 <= cx < self.cov_width and 0 <= cy < self.cov_height:
+                        if self.exploration_grid[cx, cy] == -1:
+                            self.exploration_grid[cx, cy] = 0
                             new_cells += 1
 
         return new_cells
@@ -597,16 +648,22 @@ class RobotExplorationEnv:
         self.screen.blit(base_surface, (0, 0))
         
         # Draw exploration overlay
-        for x in range(self.grid_width):
-            for y in range(self.grid_height):
-                if self.exploration_grid[x, y] == 0:  # Free space
-                    color = (0, 255, 0)  # Solid green
+        if not self.enable_coverage:
+            return
+            
+        # Adjust block drawing size to compensate for coarse grid (Idea 1D)
+        block_size = self.cov_scale * self.scale
+        
+        for cx in range(self.cov_width):
+            for cy in range(self.cov_height):
+                if self.exploration_grid[cx, cy] == 0:  
+                    color = (0, 255, 0)
                     pygame.draw.rect(self.screen, color, 
-                                (x * self.scale, y * self.scale, self.scale, self.scale))
-                elif self.exploration_grid[x, y] == 1:  # Obstacle
-                    color = (255, 0, 0)  # Solid red
+                                (cx * block_size, cy * block_size, block_size, block_size))
+                elif self.exploration_grid[cx, cy] == 1: 
+                    color = (255, 0, 0)
                     pygame.draw.rect(self.screen, color,
-                                (x * self.scale, y * self.scale, self.scale, self.scale))
+                                (cx * block_size, cy * block_size, block_size, block_size))
                     
     def _draw_robot(self, pygame):
         """Draw robot as circle with orientation"""
@@ -625,3 +682,9 @@ class RobotExplorationEnv:
         
         # Draw robot center
         pygame.draw.circle(self.screen, (255, 255, 0), (display_x, display_y), 3)
+
+    def _draw_reward(self, pygame):
+        """Draw the survival object"""
+        if self.goal_x is not None:
+            gx, gy = int(self.goal_x * self.scale), int(self.goal_y * self.scale)
+            pygame.draw.circle(self.screen, (0, 0, 255), (gx, gy), int(self.goal_success_dist * self.scale))
