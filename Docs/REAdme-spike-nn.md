@@ -4,7 +4,8 @@ This folder contains the Spike-NN (Neuroevolution) strategy implementation for t
 
 ## Overview
 
-The Spike-NN strategy implements a genetic algorithm (neuroevolution) that evolves neural network populations to navigate to a goal. Multiple agents compete each generation, with the best performers selected for reproduction through natural selection.
+The Spike-NN strategy implements a genetic algorithm (neuroevolution) that evolves neural network populations to navigate to a goal. Multiple agents compete each generation, with the best performers selected for reproduction through natural selection. 
+
 
 ## How It Works
 
@@ -28,15 +29,15 @@ The Spike-NN strategy implements a genetic algorithm (neuroevolution) that evolv
 
 ## Fitness Metrics (Tracked per Generation)
 
-| Metric | Description |
-|--------|-------------|
-| Generation | Current iteration number |
-| % of Generation Successful | Percentage of agents that reached the goal |
-| Average Success Path Length | Average steps taken by successful agents |
-| Average Success Energy Remaining | Average energy left for successful agents |
-| Average Success Health | Same as energy remaining |
-| Average Distance to Reward | Average distance to goal at end of episode |
-| Weights Directory | Location where neural network weights are saved |
+| Metric                           | Description                                     |
+| -------------------------------- | ----------------------------------------------- |
+| Generation                       | Current iteration number                        |
+| % of Generation Successful       | Percentage of agents that reached the goal      |
+| Average Success Path Length      | Average steps taken by successful agents        |
+| Average Success Energy Remaining | Average energy left for successful agents       |
+| Average Success Health           | Same as energy remaining                        |
+| Average Distance to Reward       | Average distance to goal at end of episode      |
+| Weights Directory                | Location where neural network weights are saved |
 
 ## Running Spike-NN
 
@@ -49,6 +50,7 @@ python main.py --strategy spike_nn --max_steps 5000 --env 6.png
 ## Output
 
 Weights are saved to `spike_weights/gen_XXX.json` for each generation, containing:
+
 - Generation number
 - Fitness score
 - Neural network weights
@@ -69,6 +71,7 @@ A training summary is saved to `spike_weights/training_summary.json` after compl
 ## Configuration
 
 The strategy can be configured with:
+
 - `population_size`: Number of agents per generation (default: 20)
 - `generations`: Number of evolution iterations (default: 5)
 - `energy_per_agent`: Starting energy per agent (default: 100)
