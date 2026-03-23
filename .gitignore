@@ -2,3 +2,5 @@ output/
 __pycache__/
 .qodo/
 x.* 
+venv
+*_weights
