@@ -9,15 +9,15 @@ Key Features:
 - Population of neural networks (not just one)
 - Genetic algorithm: selection, crossover, mutation
 - Energy system: each step costs 1 energy point
-- Goal-based fitness: reward when within 2 units of goal
+- Exploration-based fitness: reward based on coverage and distance traveled
 
 Fitness Metrics Tracked:
 - Generation: Current iteration number
-- % of Generation Successful: Percentage of agents that reached the goal
+- % of Generation Successful: Percentage of agents that achieved good coverage
 - Average Success Path Length: Average steps taken by successful agents
 - Average Success Energy Remaining: Average energy left for successful agents
 - Average Success Health: Same as energy remaining
-- Average Distance to Reward: Average distance to goal at end
+- Average Distance to Reward: Average distance traveled
 - Weights Directory: Location where weights are saved
 """
 
@@ -25,7 +25,6 @@ import numpy as np
 import os
 import json
 import csv
-import shutil
 from datetime import datetime
 
 
@@ -34,9 +33,9 @@ class SimpleNeuralNetwork:
     Simple Feedforward Neural Network (for genetic algorithm)
     
     Architecture:
-    - Input: 4 neurons (4 lidar rays for simplified model)
-    - Hidden: 8 neurons
-    - Output: 2 neurons (2 actions: turn left/right, or speed)
+    - Input: 8 neurons (8 lidar rays for simplified model)
+    - Hidden: 16 neurons
+    - Output: 4 neurons (4 actions: forward, left, right, backward)
     
     Uses simple weights (no spiking) for faster evolution
     """
@@ -46,14 +45,13 @@ class SimpleNeuralNetwork:
         self.hidden_size = hidden_size
         self.output_size = output_size
         
-        # Initialize weights with random values
+        # Initialize weights with He initialization for better training
         # Input -> Hidden
-        
-        self.w1 = np.random.randn(input_size, hidden_size) * 0.5
+        self.w1 = np.random.randn(input_size, hidden_size) * np.sqrt(2.0 / input_size)
         self.b1 = np.random.randn(hidden_size) * 0.1
         
         # Hidden -> Output
-        self.w2 = np.random.randn(hidden_size, output_size) * 0.5
+        self.w2 = np.random.randn(hidden_size, output_size) * np.sqrt(2.0 / hidden_size)
         self.b2 = np.random.randn(output_size) * 0.1
         
     def forward(self, inputs):
@@ -64,15 +62,14 @@ class SimpleNeuralNetwork:
             inputs: Input vector (normalized lidar readings)
             
         Returns:
-            output: Output vector (action probabilities)
+            output: Output vector (action scores)
         """
-        # Hidden layer with tanh activation
-        hidden = np.tanh(np.dot(inputs, self.w1) + self.b1)
+        # Hidden layer with ReLU activation
+        hidden = np.maximum(0, np.dot(inputs, self.w1) + self.b1)
         
-        # Output layer with softmax
+        # Output layer (linear)
         output = np.dot(hidden, self.w2) + self.b2
         
-        # Return as action selection
         return output
     
     def get_weights(self):
@@ -113,7 +110,7 @@ class SimpleNeuralNetwork:
         """Mutate weights randomly"""
         weights = self.get_weights()
         
-        # Random mutations
+        # Random mutations with Gaussian noise
         mask = np.random.random(len(weights)) < rate
         mutations = np.random.randn(len(weights)) * magnitude
         
@@ -134,6 +131,7 @@ class Agent:
     - Energy level (starts with predefined amount)
     - Fitness score
     - Success status
+    - Exploration tracking (coverage, distance traveled)
     """
     
     def __init__(self, network=None, energy=100):
@@ -147,8 +145,13 @@ class Agent:
         self.fitness = 0.0
         self.successful = False
         self.steps_taken = 0
-        self.final_distance = float('inf')
-        self.energy_remaining = 0
+        
+        # Exploration tracking
+        self.explored_cells = 0
+        self.total_distance = 0
+        self.last_x = None
+        self.last_y = None
+        self.coverage = 0.0  # Percentage of map explored
         
     def reset(self, energy=100):
         """Reset agent state for new episode"""
@@ -157,8 +160,13 @@ class Agent:
         self.fitness = 0.0
         self.successful = False
         self.steps_taken = 0
-        self.final_distance = float('inf')
-        self.energy_remaining = 0
+        
+        # Reset exploration tracking
+        self.explored_cells = 0
+        self.total_distance = 0
+        self.last_x = None
+        self.last_y = None
+        self.coverage = 0.0
         
     def take_action(self, lidar_readings):
         """
@@ -185,48 +193,63 @@ class Agent:
         # Map to action indices: 0=forward, 1=left, 2=right, 3=backward
         return int(np.argmax(output))
             
-    def update(self, action, reward=0, done=False, goal_distance=None):
+    def update(self, env):
         """
         Update agent state after each step
         
         Args:
-            action: Action taken
-            reward: Reward received
-            done: Whether episode is done
-            goal_distance: Distance to goal (if available)
+            env: Environment instance (for tracking position and exploration)
         """
         # Each step costs 1 energy
         self.energy -= 1
         self.steps_taken += 1
         
-        # Track final distance if done
-        if done and goal_distance is not None:
-            self.final_distance = goal_distance
-            
-        # Success if reached goal (reward > 0 or very close)
-        if reward > 0 or (goal_distance is not None and goal_distance < 2):
-            self.successful = True
-            
-        # Energy remaining at end
-        self.energy_remaining = max(0, self.energy)
+        # Track distance traveled
+        if self.last_x is not None:
+            dx = env.robot_x - self.last_x
+            dy = env.robot_y - self.last_y
+            self.total_distance += np.sqrt(dx*dx + dy*dy)
         
+        self.last_x = env.robot_x
+        self.last_y = env.robot_y
+        
+        # Track exploration if environment has exploration grid
+        if hasattr(env, 'exploration_grid') and env.exploration_grid is not None:
+            # Count newly explored cells
+            grid_x = int(env.robot_x)
+            grid_y = int(env.robot_y)
+            if 0 <= grid_x < env.grid_width and 0 <= grid_y < env.grid_height:
+                if env.exploration_grid[grid_x, grid_y] == -1:
+                    env.exploration_grid[grid_x, grid_y] = 0  # Mark as explored
+                    self.explored_cells += 1
+            
+            # Calculate coverage percentage
+            total_cells = env.grid_width * env.grid_height
+            self.coverage = (self.explored_cells / total_cells) * 100.0
+            
     def calculate_fitness(self):
         """
-        Calculate fitness score based on performance
+        Calculate fitness score based on exploration performance
         
         Higher fitness = better agent
+        
+        Fitness = coverage * 100 + distance_traveled * 0.5 - steps_taken * 0.05
         """
-        if self.successful:
-            # Big reward for success + bonus for remaining energy
-            self.fitness = 1000.0 + self.energy_remaining * 10.0 - self.steps_taken * 0.5
-        else:
-            # Partial reward based on getting closer to goal
-            # Inverse of distance (closer = higher fitness)
-            if self.final_distance < float('inf'):
-                self.fitness = max(0, 100.0 - self.final_distance)
-            else:
-                self.fitness = 0.0
-                
+        # Main factor: exploration coverage (heavily weighted)
+        coverage_score = self.coverage * 100
+        
+        # Bonus for distance traveled (exploration range)
+        distance_score = self.total_distance * 0.5
+        
+        # Penalty for using too many steps (efficiency)
+        efficiency_penalty = self.steps_taken * 0.05
+        
+        self.fitness = coverage_score + distance_score - efficiency_penalty
+        
+        # Mark as successful if coverage is good (more than 2%)
+        if self.coverage > 2.0:
+            self.successful = True
+            
         return self.fitness
     
     def copy(self):
@@ -242,15 +265,17 @@ class GeneticAlgorithm:
     Genetic Algorithm for evolving neural network populations
     
     Implements:
-    - Tournament selection
+    - Strong elitism (best agents pass directly to next generation)
+    - Tournament selection for parent selection
     - Crossover (crossover of weight vectors)
     - Mutation (random weight changes)
     """
     
-    def __init__(self, population_size=50, elite_count=5, mutation_rate=0.1):
+    def __init__(self, population_size=50, elite_count=5, mutation_rate=0.1, energy_per_agent=100):
         self.population_size = population_size
         self.elite_count = elite_count
         self.mutation_rate = mutation_rate
+        self.energy_per_agent = energy_per_agent
         
     def selection(self, agents):
         """Tournament selection - select best from random subset"""
@@ -273,14 +298,9 @@ class GeneticAlgorithm:
         w1 = parent1.network.get_weights()
         w2 = parent2.network.get_weights()
         
-        # Single-point crossover
-        crossover_point = np.random.randint(len(w1))
-        
-        # Create child weights
-        child_weights = np.concatenate([
-            w1[:crossover_point],
-            w2[crossover_point:]
-        ])
+        # Uniform crossover - randomly choose genes from each parent
+        mask = np.random.random(len(w1)) > 0.5
+        child_weights = np.where(mask, w1, w2)
         
         # Create child network
         child_network = SimpleNeuralNetwork()
@@ -295,7 +315,10 @@ class GeneticAlgorithm:
     
     def evolve(self, agents):
         """
-        Create next generation from current population
+        Create next generation from current population with strong elitism.
+        
+        The best agents are directly passed to the next generation without modification.
+        Only the remaining agents are created through crossover and mutation.
         
         Args:
             agents: Current population of agents
@@ -307,31 +330,48 @@ class GeneticAlgorithm:
         for agent in agents:
             agent.calculate_fitness()
             
-        # Sort by fitness
+        # Sort by fitness (descending - best first)
         sorted_agents = sorted(agents, key=lambda a: a.fitness, reverse=True)
         
-        # Elitism: keep top performers
-        new_agents = [agent.copy() for agent in sorted_agents[:self.elite_count]]
+        # ELITISM: Keep the best agents directly and pass them to next generation
+        # These are NOT modified - they stay exactly as they are
+        elites = sorted_agents[:self.elite_count]
+        new_agents = []
         
-        # Fill rest of population with offspring
+        # Pass elite agents directly to next generation (no modification)
+        for elite in elites:
+            new_agent = Agent(network=elite.network.copy(), energy=self.energy_per_agent)
+            new_agent.fitness = elite.fitness
+            new_agent.successful = elite.successful
+            new_agent.steps_taken = elite.steps_taken
+            new_agent.explored_cells = elite.explored_cells
+            new_agent.total_distance = elite.total_distance
+            new_agent.coverage = elite.coverage
+            new_agents.append(new_agent)
+        
+        print(f"[GA] Preserving {len(elites)} elite agents (fitness: {elites[0].fitness:.2f} to {elites[-1].fitness:.2f})")
+        
+        # Fill rest of population with offspring from parents
         while len(new_agents) < self.population_size:
-            # Tournament selection
-            tournament = np.random.choice(len(sorted_agents), 3, replace=False)
-            tournament_agents = [sorted_agents[i] for i in tournament]
+            # Tournament selection - pick best from random subset
+            tournament_size = 3
+            tournament_indices = np.random.choice(len(sorted_agents), min(tournament_size, len(sorted_agents)), replace=False)
+            tournament_agents = [sorted_agents[i] for i in tournament_indices]
             parent1 = max(tournament_agents, key=lambda a: a.fitness)
             
-            tournament = np.random.choice(len(sorted_agents), 3, replace=False)
-            tournament_agents = [sorted_agents[i] for i in tournament]
+            # Select second parent
+            tournament_indices = np.random.choice(len(sorted_agents), min(tournament_size, len(sorted_agents)), replace=False)
+            tournament_agents = [sorted_agents[i] for i in tournament_indices]
             parent2 = max(tournament_agents, key=lambda a: a.fitness)
             
-            # Crossover
+            # Crossover to create child
             child = self.crossover(parent1, parent2)
             
-            # Mutation
+            # Apply mutation to child
             child = self.mutate(child)
             
             new_agents.append(child)
-            
+        
         return new_agents
 
 
@@ -375,7 +415,7 @@ class SpikeNNGeneticStrategy:
         self.weights_dir = weights_dir
         
         # Create genetic algorithm
-        self.ga = GeneticAlgorithm(population_size, elite_count, mutation_rate)
+        self.ga = GeneticAlgorithm(population_size, elite_count, mutation_rate, energy_per_agent)
         
         # Initialize population
         self.population = [Agent(energy=energy_per_agent) for _ in range(population_size)]
@@ -397,6 +437,9 @@ class SpikeNNGeneticStrategy:
         
         # Create weights directory
         os.makedirs(weights_dir, exist_ok=True)
+        
+        # Track best coverage
+        self.best_coverage = 0.0
         
     def _preprocess_lidar(self, lidar_readings):
         """Normalize and downsample lidar readings to 8 inputs"""
@@ -453,14 +496,8 @@ class SpikeNNGeneticStrategy:
             # Execute action
             obs, reward, done, info = env.step(action)
             
-            # Calculate goal distance if available
-            goal_dist = None
-            if hasattr(env, 'robot_x') and hasattr(env, 'goal_x'):
-                goal_dist = np.sqrt((env.robot_x - env.goal_x)**2 + 
-                                   (env.robot_y - env.goal_y)**2)
-            
-            # Update agent
-            agent.update(action, reward, done, goal_dist)
+            # Update agent with environment for exploration tracking
+            agent.update(env)
             
         return done
         
@@ -472,12 +509,18 @@ class SpikeNNGeneticStrategy:
             metrics: Dictionary of fitness metrics
         """
         successful_agents = []
+        coverages = []
+        distances = []
         
         for i, agent in enumerate(self.population):
             self._run_agent(agent, env)
+            agent.calculate_fitness()
             
             if agent.successful:
                 successful_agents.append(agent)
+            
+            coverages.append(agent.coverage)
+            distances.append(agent.total_distance)
                 
         # Calculate metrics
         num_successful = len(successful_agents)
@@ -492,16 +535,21 @@ class SpikeNNGeneticStrategy:
             self.metrics["avg_success_energy_remaining"] = 0.0
             self.metrics["avg_success_health"] = 0.0
             
-        # Average distance to reward (for unsuccessful agents too)
-        all_distances = [a.final_distance for a in self.population if a.final_distance < float('inf')]
-        if all_distances:
-            self.metrics["avg_distance_to_reward"] = np.mean(all_distances)
+        # Average distance to reward (for all agents)
+        if distances:
+            self.metrics["avg_distance_to_reward"] = np.mean(distances)
         else:
             self.metrics["avg_distance_to_reward"] = float('inf')
             
         # Best fitness this generation
         best_agent = max(self.population, key=lambda a: a.calculate_fitness())
         self.metrics["best_fitness"] = best_agent.fitness
+        
+        # Track best coverage
+        if coverages:
+            gen_best = max(coverages)
+            if gen_best > self.best_coverage:
+                self.best_coverage = gen_best
         
         return self.metrics
         
@@ -516,10 +564,11 @@ class SpikeNNGeneticStrategy:
         weights_data = {
             "generation": generation,
             "fitness": best_agent.fitness,
+            "coverage": best_agent.coverage,
             "weights": best_agent.network.get_weights().tolist(),
             "successful": best_agent.successful,
             "steps": best_agent.steps_taken,
-            "energy_remaining": best_agent.energy_remaining
+            "total_distance": best_agent.total_distance
         }
         
         with open(filename, 'w') as f:
@@ -544,6 +593,7 @@ class SpikeNNGeneticStrategy:
             print(f"{'Average Distance to Reward':<40} {'N/A':>25}")
         print(f"{'Best Fitness':<40} {metrics['best_fitness']:>25.2f}")
         print(f"{'Weights Directory':<40} {metrics['weights_directory']:>25}")
+        print(f"{'Best Coverage':<40} {self.best_coverage:>25.2f}%")
         print("="*70)
         
     def run(self, env):
@@ -566,6 +616,7 @@ class SpikeNNGeneticStrategy:
         print(f"Population Size: {self.population_size}")
         print(f"Generations: {self.generations}")
         print(f"Energy per Agent: {self.energy_per_agent}")
+        print(f"Elite Count: {self.elite_count}")
         print(f"Mutation Rate: {self.mutation_rate}")
         print(f"Weights Directory: {self.weights_dir}")
         print("="*70)
@@ -585,7 +636,7 @@ class SpikeNNGeneticStrategy:
             # Track best coverage
             current_best = max(self.population, key=lambda a: a.calculate_fitness())
             if current_best.successful:
-                best_coverage = max(best_coverage, 100.0)  # Consider success as 100%
+                best_coverage = max(best_coverage, current_best.coverage)
                 
             total_steps += sum(a.steps_taken for a in self.population)
             
@@ -600,6 +651,7 @@ class SpikeNNGeneticStrategy:
                 
         print("\n" + "="*70)
         print("Neuroevolution Training Complete!")
+        print(f"Best Coverage Achieved: {self.best_coverage:.2f}%")
         print("="*70)
         
         # Save final summary
@@ -608,7 +660,8 @@ class SpikeNNGeneticStrategy:
             json.dump({
                 "total_generations": self.generations,
                 "final_metrics": self.metrics,
-                "total_steps": total_steps
+                "total_steps": total_steps,
+                "best_coverage": self.best_coverage
             }, f, indent=2)
             
         # Save CSV export of all generation metrics
@@ -641,7 +694,7 @@ class SpikeNNGeneticStrategy:
         print(f"Training summary saved to: {summary_file}")
         print(f"CSV metrics saved to: {csv_file}")
         
-        return total_steps, best_coverage
+        return total_steps, self.best_coverage
 
 
 def create_spike_nn_strategy(**kwargs):
