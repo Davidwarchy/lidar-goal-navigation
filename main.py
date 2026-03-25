@@ -17,7 +17,7 @@ def get_map_path(env_filename):
 
 
 def load_strategy(name, alpha=None, min_step=None, max_step=None):
-    """Load strategy class based on name."""
+    """Load strategy class\ based on name."""
     if name == "random":
         from strategies.random_walk import RandomWalkStrategy
         return RandomWalkStrategy()
