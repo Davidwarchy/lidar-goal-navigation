@@ -2,6 +2,7 @@
 numpy>=1.21.0
 opencv-python>=4.5.0
 pygame>=2.0.0
+torch>=2.0.0
 
 # Optional: for better visualization
 matplotlib>=3.5.0
