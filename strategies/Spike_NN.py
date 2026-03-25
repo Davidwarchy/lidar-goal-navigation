@@ -235,48 +235,49 @@ class Agent:
             total_cells = env.grid_width * env.grid_height
             self.coverage = (self.explored_cells / total_cells) * 100.0
             
-def calculate_fitness(self):
-    """
-    Improved fitness function for exploration agents.
-    Encourages coverage, discovery of new cells, and efficient movement.
-    """
+    def calculate_fitness(self):
+        """
+        Improved fitness function for exploration agents.
+        Encourages coverage, discovery of new cells, and efficient movement.
+        """
 
-    # 1. Coverage reward (primary objective)
-    coverage_score = self.coverage * 200
+        # 1. Coverage reward (primary objective)
+        coverage_score = self.coverage * 200
 
-    # 2. Reward discovering new cells directly
-    exploration_score = self.explored_cells * 5
+        # 2. Reward discovering new cells directly
+        exploration_score = self.explored_cells * 5
 
-    # 3. Reward movement but limit exploitation
-    distance_score = min(self.total_distance, 100) * 0.3
+        # 3. Reward movement but limit exploitation
+        distance_score = min(self.total_distance, 100) * 0.3
 
-    # 4. Penalize excessive steps
-    efficiency_penalty = self.steps_taken * 0.1
+        # 4. Penalize excessive steps
+        efficiency_penalty = self.steps_taken * 0.1
 
-    # 5. Reward remaining energy (efficient agents)
-    energy_bonus = max(self.energy, 0) * 0.5
+        # 5. Reward remaining energy (efficient agents)
+        energy_bonus = max(self.energy, 0) * 0.5
 
-    # Final fitness
-    self.fitness = (
-        coverage_score
-        + exploration_score
-        + distance_score
-        + energy_bonus
-        - efficiency_penalty
-    )
+        # Final fitness
+        self.fitness = (
+            coverage_score
+            + exploration_score
+            + distance_score
+            + energy_bonus
+            - efficiency_penalty
+        )
 
-    # Better success condition
-    if self.coverage > 1.0:  # at least 1% explored
-        self.successful = True
+        # Better success condition
+        if self.coverage > 1.0:  # at least 1% explored
+            self.successful = True
 
-    return self.fitness
-    
+        return self.fitness
+            
     def copy(self):
-        """
-        Create a copy of this agent
-        """
-        new_agent = Agent(network=self.network.copy(), energy=self.start_energy)
-        return new_agent
+            """
+            Create a copy of this agent
+            """
+            new_agent = Agent(network=self.network.copy(), energy=self.start_energy)
+            return new_agent
+
 
 
 class GeneticAlgorithm:
