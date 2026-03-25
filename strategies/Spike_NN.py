@@ -237,36 +237,25 @@ class Agent:
             
     def calculate_fitness(self):
         """
-        Improved fitness function for exploration agents.
-        Encourages coverage, discovery of new cells, and efficient movement.
+        Calculate fitness score based on exploration performance
+        
+        Higher fitness = better agent
+        
+        Fitness = coverage * 100 + distance_traveled * 0.5 - steps_taken * 0.05
         """
-
-        # 1. Coverage reward (primary objective)
-        coverage_score = self.coverage * 200
-
-        # 2. Reward discovering new cells directly
-        exploration_score = self.explored_cells * 5
-
-        # 3. Reward movement but limit exploitation
-        distance_score = min(self.total_distance, 100) * 0.3
-
-        # 4. Penalize excessive steps
-        efficiency_penalty = self.steps_taken * 0.1
-
-        # 5. Reward remaining energy (efficient agents)
-        energy_bonus = max(self.energy, 0) * 0.5
-
-        # Final fitness
-        self.fitness = (
-            coverage_score
-            + exploration_score
-            + distance_score
-            + energy_bonus
-            - efficiency_penalty
-        )
-
-        # Better success condition
-        if self.coverage > 1.0:  # at least 1% explored
+        # Main factor: exploration coverage (heavily weighted)
+        coverage_score = self.coverage * 100
+        
+        # Bonus for distance traveled (exploration range)
+        distance_score = self.total_distance * 0.5
+        
+        # Penalty for using too many steps (efficiency)
+        efficiency_penalty = self.steps_taken * 0.05
+        
+        self.fitness = coverage_score + distance_score - efficiency_penalty
+        
+        # Mark as successful if coverage is good (lowered to 0.01% for easier success)
+        if self.coverage > 0.01:
             self.successful = True
 
         return self.fitness
