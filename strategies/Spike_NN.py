@@ -272,11 +272,24 @@ class Agent:
         return self.fitness
             
     def copy(self):
-            """
-            Create a copy of this agent
-            """
-            new_agent = Agent(network=self.network.copy(), energy=self.start_energy)
-            return new_agent
+        """
+        Create a deep copy of this agent including its network and statistics.
+        """
+        
+        new_agent = Agent(
+            network=self.network.copy(),
+            energy=self.start_energy
+        )
+
+        # Copy performance statistics
+        new_agent.fitness = self.fitness
+        new_agent.successful = self.successful
+        new_agent.steps_taken = self.steps_taken
+        new_agent.explored_cells = self.explored_cells
+        new_agent.total_distance = self.total_distance
+        new_agent.coverage = self.coverage
+
+        return new_agent
 
 
 
