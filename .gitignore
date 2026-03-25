@@ -4,3 +4,7 @@ __pycache__/
 x.* 
 venv
 *_weights
+inspectionProfiles
+*.xml
+.vscode
+.idea
