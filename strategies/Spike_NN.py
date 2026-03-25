@@ -108,19 +108,19 @@ class SimpleNeuralNetwork:
     
     def mutate(self, rate=0.1, magnitude=0.5):
         """Mutate weights randomly"""
-        weights = self.get_weights()
-        
-        # Random mutations with Gaussian noise
-        mask = np.random.random(len(weights)) < rate
-        mutations = np.random.randn(len(weights)) * magnitude
-        
-        weights = np.where(mask, weights + mutations, weights)
-        
-        # Clip to prevent extreme weights
-        weights = np.clip(weights, -3.0, 3.0)
-        
-        self.set_weights(weights)
 
+        weights = self.get_weights()
+
+        # Select weights to mutate
+        mask = np.random.random(len(weights)) < rate
+
+        # Apply Gaussian mutations only to selected weights
+        weights[mask] += np.random.randn(np.sum(mask)) * magnitude
+
+        # Prevent extreme weights
+        np.clip(weights, -3.0, 3.0, out=weights)
+
+        self.set_weights(weights)
 
 class Agent:
     """
@@ -257,9 +257,9 @@ class Agent:
         # Mark as successful if coverage is good (lowered to 0.01% for easier success)
         if self.coverage > 0.01:
             self.successful = True
-
-        return self.fitness
             
+        return self.fitness
+    
     def copy(self):
         """
         Create a deep copy of this agent including its network and statistics.
@@ -279,7 +279,6 @@ class Agent:
         new_agent.coverage = self.coverage
 
         return new_agent
-
 
 
 class GeneticAlgorithm:
