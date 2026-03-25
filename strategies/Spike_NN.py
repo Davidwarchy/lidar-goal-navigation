@@ -194,7 +194,12 @@ class Agent:
         # Convert to action - use argmax to select best action
         # Output has 4 values: [forward, left, right, backward]
         # Map to action indices: 0=forward, 1=left, 2=right, 3=backward
-        return int(np.argmax(output))
+        # return int(np.argmax(output))
+        
+        probs = np.exp(output) / np.sum(np.exp(output))
+        action = np.random.choice(len(probs), p=probs)
+        
+        return action
             
     def update(self, env):
         """
