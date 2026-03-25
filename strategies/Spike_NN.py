@@ -136,7 +136,8 @@ class Agent:
     
     def __init__(self, network=None, energy=100):
         if network is None:
-            self.network = SimpleNeuralNetwork(input_size=8, hidden_size=16, output_size=4)
+            # Use 100 inputs to match actual lidar rays
+            self.network = SimpleNeuralNetwork(input_size=100, hidden_size=16, output_size=4)
         else:
             self.network = network
             
@@ -178,13 +179,15 @@ class Agent:
         Returns:
             action: 0=forward, 1=left, 2=right, 3=backward
         """
-        # Downsample lidar to 8 inputs for better coverage
-        if len(lidar_readings) > 8:
-            indices = np.linspace(0, len(lidar_readings)-1, 8).astype(int)
-            inputs = lidar_readings[indices]
-        else:
-            inputs = np.pad(lidar_readings, (0, 8 - len(lidar_readings)))
-            
+        # Use all lidar inputs (100 rays)
+        inputs = np.array(lidar_readings)
+        
+        # Ensure input size matches network expected size
+        if len(inputs) < self.network.input_size:
+            inputs = np.pad(inputs, (0, self.network.input_size - len(inputs)))
+        elif len(inputs) > self.network.input_size:
+            inputs = inputs[:self.network.input_size]
+        
         # Get network output
         output = self.network.forward(inputs)
         
@@ -246,8 +249,8 @@ class Agent:
         
         self.fitness = coverage_score + distance_score - efficiency_penalty
         
-        # Mark as successful if coverage is good (more than 2%)
-        if self.coverage > 2.0:
+        # Mark as successful if coverage is good (lowered to 0.01% for easier success)
+        if self.coverage > 0.01:
             self.successful = True
             
         return self.fitness
@@ -298,12 +301,25 @@ class GeneticAlgorithm:
         w1 = parent1.network.get_weights()
         w2 = parent2.network.get_weights()
         
+        # Use parent1's network architecture for the child
+        input_size = parent1.network.input_size
+        hidden_size = parent1.network.hidden_size
+        output_size = parent1.network.output_size
+        
         # Uniform crossover - randomly choose genes from each parent
-        mask = np.random.random(len(w1)) > 0.5
+        # Ensure both weights have the same size
+        min_len = min(len(w1), len(w2))
+        w1 = w1[:min_len]
+        w2 = w2[:min_len]
+        mask = np.random.random(min_len) > 0.5
         child_weights = np.where(mask, w1, w2)
         
-        # Create child network
-        child_network = SimpleNeuralNetwork()
+        # Create child network with same architecture as parent
+        child_network = SimpleNeuralNetwork(
+            input_size=input_size,
+            hidden_size=hidden_size,
+            output_size=output_size
+        )
         child_network.set_weights(child_weights)
         
         return Agent(network=child_network)
@@ -442,20 +458,21 @@ class SpikeNNGeneticStrategy:
         self.best_coverage = 0.0
         
     def _preprocess_lidar(self, lidar_readings):
-        """Normalize and downsample lidar readings to 8 inputs"""
+        """Normalize lidar readings to match network input size"""
         if not isinstance(lidar_readings, np.ndarray):
             lidar_readings = np.array(lidar_readings)
-            
+        
         # Normalize to [0, 1]
         if np.max(lidar_readings) > 0:
             lidar_readings = lidar_readings / np.max(lidar_readings)
         
-        # Downsample to 8 inputs for better coverage
-        if len(lidar_readings) > 8:
-            indices = np.linspace(0, len(lidar_readings)-1, 8).astype(int)
-            lidar_readings = lidar_readings[indices]
-        elif len(lidar_readings) < 8:
-            lidar_readings = np.pad(lidar_readings, (0, 8 - len(lidar_readings)))
+        # Ensure input size matches network expected size (100)
+        target_size = self.population[0].network.input_size if self.population else 100
+        
+        if len(lidar_readings) < target_size:
+            lidar_readings = np.pad(lidar_readings, (0, target_size - len(lidar_readings)))
+        elif len(lidar_readings) > target_size:
+            lidar_readings = lidar_readings[:target_size]
         
         return np.clip(lidar_readings + 0.01, 0.0, 1.0)
         
@@ -472,6 +489,10 @@ class SpikeNNGeneticStrategy:
         """
         # Reset agent and environment
         agent.reset(self.energy_per_agent)
+        
+        # Store initial energy for metrics
+        initial_energy = agent.energy
+        
         obs = env.reset()
         
         done = False
@@ -483,12 +504,8 @@ class SpikeNNGeneticStrategy:
             else:
                 lidar = obs
             
-            # Preprocess lidar - downsample to 8 inputs
+            # Preprocess lidar - should now match network input size (100)
             inputs = self._preprocess_lidar(lidar)
-            
-            # Ensure input size is exactly 8
-            if len(inputs) != 8:
-                inputs = np.pad(inputs, (0, max(0, 8 - len(inputs))))
             
             # Get action from neural network
             action = agent.take_action(inputs)
@@ -498,9 +515,12 @@ class SpikeNNGeneticStrategy:
             
             # Update agent with environment for exploration tracking
             agent.update(env)
-            
-        return done
         
+        # Store initial energy for metrics calculation
+        agent.initial_energy = initial_energy
+        
+        return done
+
     def _evaluate_population(self, env):
         """
         Evaluate entire population in the environment
@@ -528,12 +548,13 @@ class SpikeNNGeneticStrategy:
         
         if num_successful > 0:
             self.metrics["avg_success_path_length"] = np.mean([a.steps_taken for a in successful_agents])
-            self.metrics["avg_success_energy_remaining"] = np.mean([a.energy_remaining for a in successful_agents])
+            # Calculate energy remaining = initial_energy - energy_used (steps_taken since 1 per step)
+            self.metrics["avg_success_energy_remaining"] = np.mean([a.initial_energy - a.steps_taken for a in successful_agents])
             self.metrics["avg_success_health"] = self.metrics["avg_success_energy_remaining"]  # Same metric
         else:
-            self.metrics["avg_success_path_length"] = 0.0
-            self.metrics["avg_success_energy_remaining"] = 0.0
-            self.metrics["avg_success_health"] = 0.0
+            self.metrics["avg_success_path_length"] = None
+            self.metrics["avg_success_energy_remaining"] = None
+            self.metrics["avg_success_health"] = None
             
         # Average distance to reward (for all agents)
         if distances:
@@ -584,9 +605,17 @@ class SpikeNNGeneticStrategy:
         print(f"{'Metric':<40} {'Value':>25}")
         print("-"*70)
         print(f"{'% of Generation Successful':<40} {metrics['percent_successful']:>24.1f}%")
-        print(f"{'Average Success Path Length':<40} {metrics['avg_success_path_length']:>25.1f}")
-        print(f"{'Average Success Energy Remaining':<40} {metrics['avg_success_energy_remaining']:>25.1f}")
-        print(f"{'Average Success Health':<40} {metrics['avg_success_energy_remaining']:>25.1f}")
+        
+        # Handle success metrics - show N/A if no successful agents
+        if metrics['percent_successful'] > 0:
+            print(f"{'Average Success Path Length':<40} {metrics['avg_success_path_length']:>25.1f}")
+            print(f"{'Average Success Energy Remaining':<40} {metrics['avg_success_energy_remaining']:>25.1f}")
+            print(f"{'Average Success Health':<40} {metrics['avg_success_energy_remaining']:>25.1f}")
+        else:
+            print(f"{'Average Success Path Length':<40} {'N/A':>25}")
+            print(f"{'Average Success Energy Remaining':<40} {'N/A':>25}")
+            print(f"{'Average Success Health':<40} {'N/A':>25}")
+        
         if metrics['avg_distance_to_reward'] < float('inf'):
             print(f"{'Average Distance to Reward':<40} {metrics['avg_distance_to_reward']:>25.2f}")
         else:
@@ -683,9 +712,9 @@ class SpikeNNGeneticStrategy:
                 row = {
                     'Generation': gen_metrics.get('generation', 0),
                     '% of Generation Successful': f"{gen_metrics.get('percent_successful', 0.0):.1f}%",
-                    'Average Success Path Length': f"{gen_metrics.get('avg_success_path_length', 0.0):.1f}",
-                    'Average Success Energy Remaining': f"{gen_metrics.get('avg_success_energy_remaining', 0.0):.1f}",
-                    'Average Success Health': f"{gen_metrics.get('avg_success_health', 0.0):.1f}",
+                    'Average Success Path Length': f"{gen_metrics.get('avg_success_path_length', 'N/A') if gen_metrics.get('avg_success_path_length') is not None else 'N/A'}",
+                    'Average Success Energy Remaining': f"{gen_metrics.get('avg_success_energy_remaining', 'N/A') if gen_metrics.get('avg_success_energy_remaining') is not None else 'N/A'}",
+                    'Average Success Health': f"{gen_metrics.get('avg_success_health', 'N/A') if gen_metrics.get('avg_success_health') is not None else 'N/A'}",
                     'Average Distance to Reward': f"{gen_metrics.get('avg_distance_to_reward', 'N/A') if gen_metrics.get('avg_distance_to_reward', 0) != float('inf') else 'N/A'}",
                     'Weights Directory': gen_metrics.get('weights_directory', '')
                 }
