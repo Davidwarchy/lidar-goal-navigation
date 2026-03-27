@@ -1,3 +1,9 @@
+import sys
+import os
+
+# Add the project root (two levels up from this script) to the Python path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+
 import os
 import json
 import numpy as np

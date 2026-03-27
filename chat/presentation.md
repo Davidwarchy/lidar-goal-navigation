@@ -45,3 +45,72 @@ We don't want to prematurely optimize for results. We've already hypothesized th
 
 So we want to take care to setup the experiments right. 
 
+# Meta 
+## Github 
+tips for being a good manager of a github repo with collaborators 
+- we have the goal of creating a object goal navigation system...
+
+branches are getting too wild... with too many features that haven't been fixed? 
+
+I've gotten some advice: 
+- No direct push to main (You can automate this so that there's no need for manual enforcement). 
+    main → always stable, runnable
+    dev → integration branch (optional but useful for your scale)
+    feature/* → new work
+    fix/* → bug fixes
+- Have other branches 
+- Kill long-lived branches. Long-lived branches accumulate merge conflicts and lose context.
+- Update main via pull requests only from other branches 
+- Regular merges in development branch (dev/, feature/*) 
+
+I want to know how to pace developments, features, etc without the whole project spiralling out of control. I think that I want to define a clear endpoint. 
+
+## Clarity 
+Problem of clarity 
+
+I'm doing a life on silicon project with a few people. 
+
+I think that there's a problem with telling people that we don't want to have a fitness function for anything. 
+
+WE just want to have teh system, and surivval is the only metric for fitness. 
+
+I have repeated this very many times and it appears that all my people don't seem to understand this. 
+
+I think that it could be because of a few reasons: 
+- That I'm not communicating well
+- That the concept is difficult to grasp 
+- That prior experience is making people fall back to classic reasoning. 
+
+## Experiments 
+
+Experiments with survival rates. 
+--- 
+- Pure Random Walk 
+- Natural Selection 
+- Random Neural Network 
+- - High level Control Architecture: Centralized vs Decentralized 
+- - Action Space: Continuous vs Discrete steps 
+- - Action Distribution: Stochastic policy vs Deterministic policy
+- - Neural Network Depth: shallow vs not shallow 
+- - Neural Network Breadth: Narrow vs wide 
+- - Neural Net Architecture: Simple Feed Forward, Recurring Neural Network
+- - Maximum number of steps, maximum generations, individuals per generation
+- - Curriculum learning (like Peter suggested) 
+- - LUTs vs Ray Marching 
+- Spiking Neural Network (same as above) 
+
+All the while, we also want to keep track of the options we have used for each run 
+
+# 
+
+Outputs to a folder called `output` 
+
+Output for a run should be timestamped `YYYY-MM-DD-HHMMSS`
+
+We want to save experiment metadata in a json file, so that it's quite easy to refer to the experiments during ablation analysis. 
+
+Run. Generations. Population. Individual. 
+
+# Also some nice experiments to do 
+- Have a system that does selection for network connections 
+- Have a system that kinda reproduces neurons 
