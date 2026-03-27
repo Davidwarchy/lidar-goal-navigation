@@ -100,6 +100,50 @@ Experiments with survival rates.
 - Spiking Neural Network (same as above) 
 
 All the while, we also want to keep track of the options we have used for each run 
+- run date 
+- strategy name 
+- output direction
+- strategy specific information. In the case of genetic algorithm: 
+
+```json
+{
+    "run_datetime": "2026-03-19T11:50:18.200638",
+    "strategy_name": "ga",
+    "strategy_parameters": {},
+    "max_steps": 10000,
+    "environment_parameters": {
+        "grid_width": 100,
+        "grid_height": 100,
+        "robot_radius": 3,
+        "num_rays": 100,
+        "ray_length": 200,
+        "max_steps": 10000,
+        "map_image": "6.png",
+        "cache_size": 1000,
+        "goal_location": {
+            "x": 57.36092428883696,
+            "y": 61.44588212042851
+        }
+    },
+    "output_directory": "output\\2026-03-19-115018_random_walk",
+    "strategy_parameters": {
+        "population_size": 100,
+        "num_generations": 30,
+        "mutation_rate": 0.1,
+        "mutation_scale": 0.1,
+        "survivor_ratio": 0.2,
+        "load_weights": null,
+        "neural_net_layers": [100, 50, 10, 2],
+        "use_curriculum": "True"
+    },
+    "params" : {
+        "render": "False" , 
+        "ray_casting_method": "LUT"
+    }
+}
+``` 
+
+We might want to have an option to give a goal location to a robot. 
 
 # 
 
@@ -114,3 +158,13 @@ Run. Generations. Population. Individual.
 # Also some nice experiments to do 
 - Have a system that does selection for network connections 
 - Have a system that kinda reproduces neurons 
+
+# Naming of Iteration Objects 
+
+One _run_ (main.py) conducts multiple _trials_.
+
+A _trial_ goes like this: we start with one _generation_, then two. If no survivors at any point between moving to the next generation, we stop that _trial_. We call that trial _extinct_, . 
+
+A _generation_ has many _individuals_. A group of _individuals_ in the same _generation_ is called a _population_. 
+
+Each _individual_ runs in the env until done. 
