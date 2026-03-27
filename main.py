@@ -15,17 +15,8 @@ def get_map_path(env_filename):
     """Return full path to environment image."""
     return os.path.join(IMAGES_DIR, env_filename)
 
-
 def load_strategy(name, alpha=None, min_step=None, max_step=None, population_size=100, num_generations=30, load_weights=None):
-    """Load strategy class based on name."""
-    if name == "ga":
-        from strategies.genetic_algorithm import GeneticAlgorithmStrategy
-        return GeneticAlgorithmStrategy(
-            population_size=population_size, 
-            num_generations=num_generations, 
-            load_weights=load_weights
-        )
-
+    """Load strategy class\ based on name."""
     if name == "random":
         from strategies.random_walk import RandomWalkStrategy
         return RandomWalkStrategy()
@@ -45,6 +36,22 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None, population_siz
         from strategies.uniform import UniformRunLengthStrategy
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
+    if name == "spike_nn":
+        from strategies import SpikeNNGeneticStrategy
+        return SpikeNNGeneticStrategy(
+            population_size=50,
+            generations=20,
+            num_trials=5,
+            mutation_rate=0.3,
+            weights_dir="spike_weights"
+        )
+    if name == "ga":
+        from strategies.genetic_algorithm import GeneticAlgorithmStrategy
+        return GeneticAlgorithmStrategy(
+            population_size=population_size, 
+            num_generations=num_generations, 
+            load_weights=load_weights
+        )
 
     raise ValueError(f"Unknown strategy: {name}")
 
@@ -56,7 +63,7 @@ def parse_args():
         "--strategy",
         type=str,
         default="random",
-        choices=["random", "levy", "manual", "levy_custom", "uniform", "ga"],
+        choices=["random", "levy", "manual", "levy_custom", "uniform", "spike_nn", "ga"],
         help="Exploration strategy"
     )
 

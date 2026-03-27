@@ -4,3 +4,5 @@ __pycache__/
 x*.* 
 meta/
 spike_weights/*
+x.* 
+venv
