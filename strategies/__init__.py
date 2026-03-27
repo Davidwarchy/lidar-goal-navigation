@@ -3,7 +3,7 @@ from .random_walk import RandomWalkStrategy
 from .levy_walk import LevyWalkStrategy
 from .manual_control import ManualControlStrategy
 from .uniform import UniformRunLengthStrategy
-from .Spike_NN import SpikeNNGeneticStrategy
+from .spiking import SpikeNNGeneticStrategy
 
 __all__ = [
     'BaseStrategy',
