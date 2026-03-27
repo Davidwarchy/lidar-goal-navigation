@@ -35,6 +35,7 @@ import csv
 import random
 from datetime import datetime
 from .base_strategy import BaseStrategy
+from tqdm import tqdm 
 
 # ---------------------------------------------------------------------------
 # Leaky Integrate-and-Fire Spiking Neural Network
@@ -230,82 +231,105 @@ class SpikeNNGeneticStrategy(BaseStrategy):
         os.makedirs(self.weights_dir, exist_ok=True)
 
     def run(self, env):
+        import time
+        from tqdm import tqdm
+        
         results_file = os.path.join(env.output_dir, "trial_metrics.csv")
-        headers = ["Run", "Generation", "% of Generation Successful", "Average Success Path Length", 
-                   "Average Success Energy Remaining", "Average Success Health", 
-                   "Average Distance to Reward", "Weights Directory"]
+        headers = ["Run", "Generation", "% Success", "Avg Path Length", 
+                   "Avg Energy Rem", "Avg Health Rem", "Avg Dist to Reward", 
+                   "Gen Total Steps", "Gen Time (s)", "ms/Step", "Weights Directory"]
         
         with open(results_file, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(headers)
 
             for trial in range(1, self.num_trials + 1):
-                print(f"\n--- Starting Trial {trial} ---")
-                # Initialize random population 
+                # Outer progress bar for Generations
+                gen_pbar = tqdm(range(1, self.max_gens + 1), 
+                                desc=f"Trial {trial}/{self.num_trials}", 
+                                unit="gen", position=0)
+                
                 population = [SpikingNeuralNetwork(input_size=env.num_rays) for _ in range(self.pop_size)]
                 
-                for gen in range(1, self.max_gens + 1):
+                for gen in gen_pbar:
                     survivors = []
-                    gen_stats = {
-                        "path_lengths": [], "energies": [], "healths": [], "dist_to_reward": []
-                    }
+                    gen_stats = {"path_lengths": [], "energies": [], "healths": [], "dist_to_reward": []}
+                    
+                    # Performance Tracking for this generation
+                    gen_start_time = time.time()
+                    gen_total_steps = 0
 
-                    for idx, net in enumerate(population):
+                    # Inner progress bar for Individuals
+                    ind_pbar = tqdm(enumerate(population), total=self.pop_size, 
+                                    desc=f"  Gen {gen} Progress", leave=False, 
+                                    unit="ind", position=1)
+
+                    for idx, net in ind_pbar:
                         obs = env.reset()
                         net.reset_state()
                         done = False
                         
                         while not done:
-                            # Normalize LIDAR 
                             normalized_obs = obs / env.ray_length
                             output = net.forward(normalized_obs)
                             action = np.argmax(output)
                             obs, reward, done, info = env.step(action)
+                            
+                            # Increment total steps for the whole generation
+                            gen_total_steps += 1
+                            
                             if env.render_flag: env.render()
 
-                        # Survival Condition: Goal Reached (reward == 1.0) 
                         if info.get("goal_reached", False):
                             survivors.append(net)
                             gen_stats["path_lengths"].append(env.current_step)
                             gen_stats["energies"].append(info["energy"])
                             gen_stats["healths"].append(info["health"])
                             
-                        # Track distance to reward for everyone
-                        dx = env.robot_x - env.goal_x
-                        dy = env.robot_y - env.goal_y
-                        gen_stats["dist_to_reward"].append(np.sqrt(dx*dx + dy*dy))
+                        dx, dy = env.robot_x - env.goal_x, env.robot_y - env.goal_y
+                        dist = np.sqrt(dx*dx + dy*dy)
+                        gen_stats["dist_to_reward"].append(dist)
+                        
+                        ind_pbar.set_postfix({"Found": len(survivors), "Dist": f"{dist:.1f}"})
+
+                    # Calculate timing stats
+                    gen_duration = time.time() - gen_start_time
+                    ms_per_step = (gen_duration * 1000) / gen_total_steps if gen_total_steps > 0 else 0
 
                     success_rate = len(survivors) / self.pop_size
                     avg_path = np.mean(gen_stats["path_lengths"]) if survivors else 0
-                    avg_energy = np.mean(gen_stats["energies"]) if survivors else 0
-                    avg_health = np.mean(gen_stats["healths"]) if survivors else 0
                     avg_dist = np.mean(gen_stats["dist_to_reward"])
 
-                    # Save weights for the generation 
+                    # Update outer bar with Success Rate and Performance
+                    gen_pbar.set_postfix({
+                        "SR": f"{success_rate*100:.1f}%",
+                        "ms/st": f"{ms_per_step:.2f}",
+                        "Steps": gen_total_steps
+                    })
+
+                    # Save weights and Log Data
                     gen_dir = os.path.join(self.weights_dir, f"trial_{trial}_gen_{gen}")
                     os.makedirs(gen_dir, exist_ok=True)
                     if survivors:
                         with open(os.path.join(gen_dir, "best_survivor.json"), 'w') as wf:
                             json.dump({"weights": survivors[0].get_weights().tolist()}, wf)
 
-                    # Log Data
                     row = [trial, gen, f"{success_rate*100:.2f}%", f"{avg_path:.2f}", 
-                           f"{avg_energy:.2f}", f"{avg_health:.2f}", f"{avg_dist:.2f}", gen_dir]
+                           f"{np.mean(gen_stats['energies']) if survivors else 0:.2f}", 
+                           f"{np.mean(gen_stats['healths']) if survivors else 0:.2f}", 
+                           f"{avg_dist:.2f}", gen_total_steps, f"{gen_duration:.2f}", 
+                           f"{ms_per_step:.2f}", gen_dir]
                     writer.writerow(row)
                     f.flush()
 
-                    print(f"Trial {trial} Gen {gen}: Success Rate {success_rate*100:.1f}%")
-
-                    # Extinction Check: Stop trial if no one reached the goal
                     if not survivors:
-                        print(f"[EXTINCT] Trial {trial} ended at Generation {gen} - No survivors.")
+                        gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
                         break
                     
-                    # Evolution: Rebuild population through mutation/recombination of survivors 
                     population = self._reproduce(survivors)
 
-        return 0, 0 # Return placeholder for main.py compatibility
-
+        return 0, 0
+    
     def _reproduce(self, survivors):
         new_population = []
         # Keep survivors (Elitism) 

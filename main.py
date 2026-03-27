@@ -15,8 +15,10 @@ def get_map_path(env_filename):
     """Return full path to environment image."""
     return os.path.join(IMAGES_DIR, env_filename)
 
-def load_strategy(name, alpha=None, min_step=None, max_step=None, population_size=100, num_generations=30, load_weights=None):
-    """Load strategy class\ based on name."""
+def load_strategy(name, alpha=None, min_step=None, max_step=None, 
+                  population_size=100, num_generations=30, num_trials=3, 
+                  load_weights=None):
+    """Load strategy class based on name."""
     if name == "random":
         from strategies.random_walk import RandomWalkStrategy
         return RandomWalkStrategy()
@@ -37,11 +39,11 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None, population_siz
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
     if name == "spike_nn":
-        from strategies import SpikeNNGeneticStrategy
+        from strategies.spiking import SpikeNNGeneticStrategy
         return SpikeNNGeneticStrategy(
-            population_size=1000,
-            generations=50,
-            num_trials=20,
+            population_size=population_size,
+            generations=num_generations,
+            num_trials=num_trials,
             mutation_rate=0.3,
             weights_dir="spike_weights"
         )
@@ -80,17 +82,17 @@ def parse_args():
         help="Enable rendering"
     )
 
+    # New Evolutionary/Trial Arguments
+    parser.add_argument("--trials", type=int, default=20, help="Number of independent trials") 
+    parser.add_argument("--generations", type=int, default=50, help="Generations per trial") 
+    parser.add_argument("--population", type=int, default=1000, help="Individuals per generation") 
+
     # Custom Lévy walk parameters
     parser.add_argument("--alpha", type=float, default=1.6)
     parser.add_argument("--min_step", type=float, default=1.0)
     parser.add_argument("--max_step_len", type=float, default=200.0)
-
-    # GA parameters
-    parser.add_argument("--population", type=int, default=100, help="Population size for GA")
-    parser.add_argument("--generations", type=int, default=30, help="Number of generations for GA")
-    parser.add_argument("--load_weights", type=str, default=None, help="Path to a previous generation's weights directory to continue training")
-
-    # New argument: choose environment
+    parser.add_argument("--load_weights", type=str, default=None, help="Path to weights")
+    # Choose environment
     parser.add_argument(
         "--env",
         type=str,
@@ -100,12 +102,9 @@ def parse_args():
 
     return parser.parse_args()
 
-
 def main():
     args = parse_args()
-
-    if args.strategy == "manual":
-        args.render = True
+    if args.strategy == "manual": args.render = True
 
     strategy = load_strategy(
         args.strategy,
@@ -114,6 +113,7 @@ def main():
         max_step=args.max_step_len,
         population_size=args.population,
         num_generations=args.generations,
+        num_trials=args.trials,
         load_weights=args.load_weights
     )
 
@@ -153,4 +153,8 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # example command: python main.py --strategy random --max_steps 1000 --env 6.png
+    # example commands
+    # --- RANDOM --- 
+    # python main.py --strategy random --max_steps 1000 --env 6.png
+    # --- SPIKING --- 
+    # python main.py --strategy spike_nn --trials 50 --generations 50 --population 1000 --max_steps 1000 --env 6.png
