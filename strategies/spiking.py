@@ -32,8 +32,9 @@ import numpy as np
 import os
 import json
 import csv
+import random
 from datetime import datetime
-
+from .base_strategy import BaseStrategy
 
 # ---------------------------------------------------------------------------
 # Leaky Integrate-and-Fire Spiking Neural Network
@@ -118,12 +119,7 @@ class LIFNeuronLayer:
     def set_weights(self, weights: np.ndarray):
         size_W = self.n_in * self.n_out
         self.W = weights[:size_W].reshape(self.n_in, self.n_out)
-        self.b = weights[size_W: size_W + self.n_out]
-
-    @property
-    def n_params(self) -> int:
-        return self.n_in * self.n_out + self.n_out
-
+        self.b = weights[size_W:]
 
 class SpikingNeuralNetwork:
     """
@@ -151,26 +147,13 @@ class SpikingNeuralNetwork:
     threshold   : firing threshold for all layers (default 1.0)
     """
 
-    def __init__(self,
-                 input_size: int = 100,
-                 hidden_size: int = 64,
-                 output_size: int = 4,
-                 n_steps: int = 5,
-                 leak: float = 0.9,
-                 threshold: float = 1.0):
-
+    def __init__(self, input_size=100, hidden_size=64, output_size=4, n_steps=5):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.output_size = output_size
         self.n_steps = n_steps
-        self.leak = leak
-        self.threshold = threshold
-
-        self.hidden_layer = LIFNeuronLayer(input_size, hidden_size,
-                                           leak=leak, threshold=threshold)
-        self.output_layer = LIFNeuronLayer(hidden_size, output_size,
-                                           leak=leak, threshold=threshold)
-
+        self.hidden_layer = LIFNeuronLayer(input_size, hidden_size)
+        self.output_layer = LIFNeuronLayer(hidden_size, output_size)
     # ------------------------------------------------------------------
     # Inference
     # ------------------------------------------------------------------
@@ -219,27 +202,125 @@ class SpikingNeuralNetwork:
         ])
 
     def set_weights(self, weights: np.ndarray):
-        n_h = self.hidden_layer.n_params
+        n_h = (self.input_size * self.hidden_size) + self.hidden_size
         self.hidden_layer.set_weights(weights[:n_h])
-        self.output_layer.set_weights(weights[n_h: n_h + self.output_layer.n_params])
+        self.output_layer.set_weights(weights[n_h:])
 
-    def copy(self) -> "SpikingNeuralNetwork":
-        new_net = SpikingNeuralNetwork(
-            input_size=self.input_size,
-            hidden_size=self.hidden_size,
-            output_size=self.output_size,
-            n_steps=self.n_steps,
-            leak=self.leak,
-            threshold=self.threshold,
-        )
-        new_net.set_weights(self.get_weights().copy())
-        return new_net
+# ---------------------------------------------------------------------------
+# Neuroevolution Strategy with Extinction Logic
+# ---------------------------------------------------------------------------
 
-    def mutate(self, rate: float = 0.1, magnitude: float = 0.5):
-        """In-place Gaussian weight mutation."""
-        weights = self.get_weights()
-        mask = np.random.random(len(weights)) < rate
-        weights[mask] += np.random.randn(mask.sum()) * magnitude
-        np.clip(weights, -3.0, 3.0, out=weights)
-        self.set_weights(weights)
+class SpikeNNGeneticStrategy(BaseStrategy):
+    def __init__(self, population_size=50, generations=20, num_trials=3, 
+                 mutation_rate=0.2, mutation_mag=0.5, weights_dir="spike_weights"):
+        params = {
+            "population_size": population_size,
+            "generations": generations,
+            "num_trials": num_trials,
+            "mutation_rate": mutation_rate,
+            "weights_dir": weights_dir
+        }
+        super().__init__("spike_nn", params)
+        self.pop_size = population_size
+        self.max_gens = generations
+        self.num_trials = num_trials
+        self.mutation_rate = mutation_rate
+        self.mutation_mag = mutation_mag
+        self.weights_dir = weights_dir
+        os.makedirs(self.weights_dir, exist_ok=True)
 
+    def run(self, env):
+        results_file = os.path.join(env.output_dir, "trial_metrics.csv")
+        headers = ["Run", "Generation", "% of Generation Successful", "Average Success Path Length", 
+                   "Average Success Energy Remaining", "Average Success Health", 
+                   "Average Distance to Reward", "Weights Directory"]
+        
+        with open(results_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for trial in range(1, self.num_trials + 1):
+                print(f"\n--- Starting Trial {trial} ---")
+                # Initialize random population 
+                population = [SpikingNeuralNetwork(input_size=env.num_rays) for _ in range(self.pop_size)]
+                
+                for gen in range(1, self.max_gens + 1):
+                    survivors = []
+                    gen_stats = {
+                        "path_lengths": [], "energies": [], "healths": [], "dist_to_reward": []
+                    }
+
+                    for idx, net in enumerate(population):
+                        obs = env.reset()
+                        net.reset_state()
+                        done = False
+                        
+                        while not done:
+                            # Normalize LIDAR 
+                            normalized_obs = obs / env.ray_length
+                            output = net.forward(normalized_obs)
+                            action = np.argmax(output)
+                            obs, reward, done, info = env.step(action)
+                            if env.render_flag: env.render()
+
+                        # Survival Condition: Goal Reached (reward == 1.0) 
+                        if info.get("goal_reached", False):
+                            survivors.append(net)
+                            gen_stats["path_lengths"].append(env.current_step)
+                            gen_stats["energies"].append(info["energy"])
+                            gen_stats["healths"].append(info["health"])
+                            
+                        # Track distance to reward for everyone
+                        dx = env.robot_x - env.goal_x
+                        dy = env.robot_y - env.goal_y
+                        gen_stats["dist_to_reward"].append(np.sqrt(dx*dx + dy*dy))
+
+                    success_rate = len(survivors) / self.pop_size
+                    avg_path = np.mean(gen_stats["path_lengths"]) if survivors else 0
+                    avg_energy = np.mean(gen_stats["energies"]) if survivors else 0
+                    avg_health = np.mean(gen_stats["healths"]) if survivors else 0
+                    avg_dist = np.mean(gen_stats["dist_to_reward"])
+
+                    # Save weights for the generation 
+                    gen_dir = os.path.join(self.weights_dir, f"trial_{trial}_gen_{gen}")
+                    os.makedirs(gen_dir, exist_ok=True)
+                    if survivors:
+                        with open(os.path.join(gen_dir, "best_survivor.json"), 'w') as wf:
+                            json.dump({"weights": survivors[0].get_weights().tolist()}, wf)
+
+                    # Log Data
+                    row = [trial, gen, f"{success_rate*100:.2f}%", f"{avg_path:.2f}", 
+                           f"{avg_energy:.2f}", f"{avg_health:.2f}", f"{avg_dist:.2f}", gen_dir]
+                    writer.writerow(row)
+                    f.flush()
+
+                    print(f"Trial {trial} Gen {gen}: Success Rate {success_rate*100:.1f}%")
+
+                    # Extinction Check: Stop trial if no one reached the goal
+                    if not survivors:
+                        print(f"[EXTINCT] Trial {trial} ended at Generation {gen} - No survivors.")
+                        break
+                    
+                    # Evolution: Rebuild population through mutation/recombination of survivors 
+                    population = self._reproduce(survivors)
+
+        return 0, 0 # Return placeholder for main.py compatibility
+
+    def _reproduce(self, survivors):
+        new_population = []
+        # Keep survivors (Elitism) 
+        new_population.extend(survivors[:max(1, self.pop_size // 10)])
+        
+        while len(new_population) < self.pop_size:
+            parent = random.choice(survivors)
+            child_weights = parent.get_weights().copy()
+            
+            # Mutation: Gaussian noise 
+            mask = np.random.random(len(child_weights)) < self.mutation_rate
+            child_weights[mask] += np.random.randn(np.sum(mask)) * self.mutation_mag
+            
+            child = SpikingNeuralNetwork(input_size=parent.input_size)
+            child.set_weights(child_weights)
+            new_population.append(child)
+            
+        return new_population

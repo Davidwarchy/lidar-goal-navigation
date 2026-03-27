@@ -42,8 +42,7 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None):
         return SpikeNNGeneticStrategy(
             population_size=50,
             generations=20,
-            energy_per_agent=150,
-            elite_count=10,
+            num_trials=5,
             mutation_rate=0.3,
             weights_dir="spike_weights"
         )
