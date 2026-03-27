@@ -3,3 +3,4 @@ __pycache__/
 .qodo/
 x*.* 
 meta/
+spike_weights/*
