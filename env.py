@@ -148,6 +148,9 @@ class RobotExplorationEnv:
 
         self._steps = np.arange(0, self.ray_length)
         self._base_angles = np.linspace(-45, 45, self.num_rays)
+
+        if self.strategy_name in ["ga", "spike_nn"]: 
+            self.verbose = False
     
         # Save metadata immediately
         self._save_metadata()
@@ -226,7 +229,9 @@ class RobotExplorationEnv:
         metadata_path = os.path.join(self.output_dir, "metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=4)
-        print(f"[INFO] Metadata saved to {metadata_path}")
+
+        if self.verbose: 
+            print(f"[INFO] Metadata saved to {metadata_path}")
 
     def reset(self):
         # Start robot in a free area (find first free pixel from center)

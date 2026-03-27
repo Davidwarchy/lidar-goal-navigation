@@ -39,9 +39,9 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None, population_siz
     if name == "spike_nn":
         from strategies import SpikeNNGeneticStrategy
         return SpikeNNGeneticStrategy(
-            population_size=50,
-            generations=20,
-            num_trials=5,
+            population_size=1000,
+            generations=50,
+            num_trials=20,
             mutation_rate=0.3,
             weights_dir="spike_weights"
         )
