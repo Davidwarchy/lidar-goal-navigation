@@ -139,6 +139,11 @@ All the while, we also want to keep track of the options we have used for each r
     "params" : {
         "render": "False" , 
         "ray_casting_method": "LUT"
+    },
+    "timing_parameters": {
+        "total_steps": 20123, 
+        "total_time": 200188,
+        "time_per_step": 0.1
     }
 }
 ``` 
