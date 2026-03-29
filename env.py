@@ -43,7 +43,9 @@ class RobotExplorationEnv:
                  output_dir=None, render=False,
                  strategy_name="unknown", strategy_parameters=None,
                  cache_size=1000,
-                 enable_coverage=False): 
+                 enable_coverage=False,
+                 verbose=False
+                 ): 
 
         # ------------------------------------------------------------------
         # 1. Load the image **first**
@@ -148,6 +150,8 @@ class RobotExplorationEnv:
 
         self._steps = np.arange(0, self.ray_length)
         self._base_angles = np.linspace(-45, 45, self.num_rays)
+
+        self.verbose = verbose
 
         if self.strategy_name in ["ga", "spike_nn"]: 
             self.verbose = False

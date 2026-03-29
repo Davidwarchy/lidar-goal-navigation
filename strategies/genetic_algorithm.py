@@ -1,420 +1,453 @@
+"""
+Feedforward Neural Network (FFNN) with Genetic Algorithm (Neuroevolution)
+
+This strategy implements a population-based neuroevolution system where
+multiple neural network agents compete in each generation. The best performing
+agents are selected for reproduction through natural selection.
+
+Key Features:
+- Population of feedforward neural networks (not just one)
+- Genetic algorithm: selection, crossover, mutation
+- Energy system: each step costs 1 energy point
+- Exploration-based fitness: reward based on coverage and distance traveled
+
+Neural Network:
+- Standard Feedforward Neural Network with ReLU hidden activations
+- Softmax output layer for action probability distribution
+- Deterministic argmax action selection at inference time
+- No temporal state — each observation is processed independently
+
+Fitness Metrics Tracked:
+- Generation: Current iteration number
+- % of Generation Successful: Percentage of agents that survived (reached goal)
+- Average Success Path Length: Average steps taken by successful agents
+- Average Success Energy Remaining: Average energy left for successful agents
+- Average Success Health: Same as energy remaining
+- Average Distance to Reward: Average distance traveled
+- Weights Directory: Location where weights are saved
+"""
+
+import numpy as np
 import os
 import json
-import numpy as np
+import csv
+import random
+from datetime import datetime
 from .base_strategy import BaseStrategy
+from tqdm import tqdm
 
-class NeuralNetwork:
+
+# ---------------------------------------------------------------------------
+# Feedforward Neural Network
+# ---------------------------------------------------------------------------
+
+class DenseLayer:
     """
-    A simple Multi-Layer Perceptron (MLP) neural network using pure NumPy operations.
-    It links the perception (LIDAR rays) to the actuators (motors).
+    A fully-connected (dense) layer with a configurable activation function.
+
+    Forward pass:
+        z = x @ W + b
+        output = activation(z)
+
+    Parameters
+    ----------
+    n_in       : number of input features
+    n_out      : number of neurons (output features)
+    activation : one of 'relu', 'tanh', 'sigmoid', 'softmax', or 'linear'
     """
-    def __init__(self, input_size: int, hidden_sizes: list, output_size: int):
-        """
-        Initializes the neural network weights and biases using He initialization.
-        
-        Args:
-            input_size (int): Number of input features (LIDAR rays).
-            hidden_sizes (list): List containing the number of neurons in each hidden layer.
-            output_size (int): Number of output neurons (motor actions).
-        """
-        self.input_size = input_size
-        self.hidden_sizes = hidden_sizes
-        self.output_size = output_size
-        
-        # He initialization: We initialize weights from a normal distribution and scale
-        # by sqrt(2/fan_in). This helps maintain the variance of activations across layers,
-        # preventing gradients from vanishing or exploding when using ReLU activation.
-        self.W1 = np.random.randn(input_size, hidden_sizes[0]) * np.sqrt(2. / input_size)
-        self.b1 = np.zeros(hidden_sizes[0])
-        self.W2 = np.random.randn(hidden_sizes[0], hidden_sizes[1]) * np.sqrt(2. / hidden_sizes[0])
-        self.b2 = np.zeros(hidden_sizes[1])
-        self.W3 = np.random.randn(hidden_sizes[1], output_size) * np.sqrt(2. / hidden_sizes[1])
-        self.b3 = np.zeros(output_size)
-        
+
+    ACTIVATIONS = ('relu', 'tanh', 'sigmoid', 'softmax', 'linear')
+
+    def __init__(self, n_in: int, n_out: int, activation: str = 'relu'):
+        if activation not in self.ACTIVATIONS:
+            raise ValueError(f"activation must be one of {self.ACTIVATIONS}")
+
+        self.n_in = n_in
+        self.n_out = n_out
+        self.activation = activation
+
+        # He initialisation for ReLU; Xavier for others
+        if activation == 'relu':
+            scale = np.sqrt(2.0 / n_in)
+        else:
+            scale = np.sqrt(1.0 / n_in)
+
+        self.W = np.random.randn(n_in, n_out) * scale
+        self.b = np.zeros(n_out)
+
+    # ------------------------------------------------------------------
+    # Forward pass
+    # ------------------------------------------------------------------
+
     def forward(self, x: np.ndarray) -> np.ndarray:
         """
-        Computes the forward pass of the neural network using highly optimized vectorized operations.
-        
-        Args:
-            x (np.ndarray): Input array of shape (input_size,) containing normalized LIDAR distances.
-            
-        Returns:
-            np.ndarray: Output array of shape (output_size,) containing raw action scores.
-        """
-        # --- First Hidden Layer ---
-        # Matrix multiplication: np.dot(x, W1) computes the weighted sum of inputs for each neuron 
-        # in the hidden layer. Adding biases shifts the activation space.
-        z1 = np.dot(x, self.W1) + self.b1
-        # ReLU activation: f(x) = max(0, x). We use np.maximum for vectorized element-wise max.
-        # This introduces non-linearity, allowing the network to learn complex non-linear mappings 
-        # from LIDAR inputs to required actions.
-        a1 = np.maximum(0, z1)
-        
-        # --- Second Hidden Layer ---
-        # Matrix multiplication to project from the first hidden layer space to the second hidden layer.
-        z2 = np.dot(a1, self.W2) + self.b2
-        # Apply ReLU activation again for further non-linear transformation.
-        a2 = np.maximum(0, z2)
-        
-        # --- Output Layer ---
-        # Project to the output space (action scores). No activation function here 
-        # because we only need the relative magnitudes to select the max (argmax) later.
-        z3 = np.dot(a2, self.W3) + self.b3
-        return z3
+        Compute the layer output for a single observation vector.
 
-    def get_action(self, x: np.ndarray) -> int:
-        """
-        Determines the best action to take given the current observation.
-        
-        Args:
-            x (np.ndarray): Input array of LIDAR distances.
-            
-        Returns:
-            int: The index of the selected action.
-        """
-        out = self.forward(x)
-        # Select the action with the highest raw score using np.argmax. This is equivalent 
-        # to applying a softmax and taking the most probable action, but computationally cheaper.
-        return int(np.argmax(out))
+        Parameters
+        ----------
+        x : (n_in,) float array
 
-    def get_genes(self) -> np.ndarray:
+        Returns
+        -------
+        out : (n_out,) float array after activation
         """
-        Serializes the network's weights and biases into a single 1D array.
-        This represents the 'genetic code' of the neural network.
-        
-        Returns:
-            np.ndarray: A 1D array containing all weights and biases.
+        z = x @ self.W + self.b
+
+        if self.activation == 'relu':
+            return np.maximum(0.0, z)
+        elif self.activation == 'tanh':
+            return np.tanh(z)
+        elif self.activation == 'sigmoid':
+            return 1.0 / (1.0 + np.exp(-np.clip(z, -30, 30)))
+        elif self.activation == 'softmax':
+            z_stable = z - z.max()          # numerical stability
+            exp_z = np.exp(z_stable)
+            return exp_z / exp_z.sum()
+        else:  # linear
+            return z
+
+    # ------------------------------------------------------------------
+    # Genome helpers (flat weight vector for the GA)
+    # ------------------------------------------------------------------
+
+    def get_weights(self) -> np.ndarray:
+        return np.concatenate([self.W.flatten(), self.b])
+
+    def set_weights(self, weights: np.ndarray):
+        size_W = self.n_in * self.n_out
+        self.W = weights[:size_W].reshape(self.n_in, self.n_out)
+        self.b = weights[size_W:]
+
+
+class FeedforwardNeuralNetwork:
+    """
+    Two-hidden-layer feedforward neural network for discrete action selection.
+
+    Architecture
+    ------------
+    Input  (input_size,)
+      ↓  Dense + ReLU
+    Hidden-1 (hidden_size,)
+      ↓  Dense + ReLU
+    Hidden-2 (hidden_size // 2,)
+      ↓  Dense + Softmax
+    Output (output_size,)  →  argmax → discrete action
+
+    Parameters
+    ----------
+    input_size  : dimensionality of the observation vector
+    hidden_size : width of the first hidden layer
+                  (second hidden layer uses hidden_size // 2 neurons)
+    output_size : number of discrete actions
+    """
+
+    def __init__(self, input_size: int = 100,
+                 hidden_size: int = 64,
+                 output_size: int = 4):
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+
+        h2 = max(hidden_size // 2, output_size)
+
+        self.layer1 = DenseLayer(input_size, hidden_size, activation='relu')
+        self.layer2 = DenseLayer(hidden_size, h2,         activation='relu')
+        self.layer3 = DenseLayer(h2,          output_size, activation='softmax')
+
+    # ------------------------------------------------------------------
+    # Inference
+    # ------------------------------------------------------------------
+
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
         """
-        # Flatten all weight matrices and bias vectors into 1D arrays, then concatenate them 
-        # into a single contiguous array. This is required for fast vectorized genetic operations.
+        Run a single forward pass and return action probabilities.
+
+        Parameters
+        ----------
+        inputs : (input_size,) float array, values in [0, 1]
+
+        Returns
+        -------
+        probs : (output_size,) float array summing to 1.0
+                Larger value → more preferred action.
+        """
+        x = self.layer1.forward(inputs)
+        x = self.layer2.forward(x)
+        return self.layer3.forward(x)
+
+    def reset_state(self):
+        """No-op — included for API compatibility with the SNN version."""
+        pass
+
+    # ------------------------------------------------------------------
+    # Genome helpers
+    # ------------------------------------------------------------------
+
+    def get_weights(self) -> np.ndarray:
         return np.concatenate([
-            self.W1.flatten(), self.b1.flatten(),
-            self.W2.flatten(), self.b2.flatten(),
-            self.W3.flatten(), self.b3.flatten()
+            self.layer1.get_weights(),
+            self.layer2.get_weights(),
+            self.layer3.get_weights(),
         ])
-        
-    def set_genes(self, genes: np.ndarray):
-        """
-        Deserializes a 1D array of genes back into the network's weights and biases.
-        
-        Args:
-            genes (np.ndarray): The 1D array containing the genetic code.
-        """
-        idx = 0
-        
-        # Reconstruct W1 by extracting the right number of elements and reshaping back to 2D.
-        s = self.input_size * self.hidden_sizes[0]
-        self.W1 = genes[idx:idx+s].reshape((self.input_size, self.hidden_sizes[0]))
-        idx += s
-        
-        # Reconstruct b1. No reshaping needed as biases are 1D.
-        s = self.hidden_sizes[0]
-        self.b1 = genes[idx:idx+s]
-        idx += s
-        
-        # Reconstruct W2.
-        s = self.hidden_sizes[0] * self.hidden_sizes[1]
-        self.W2 = genes[idx:idx+s].reshape((self.hidden_sizes[0], self.hidden_sizes[1]))
-        idx += s
-        
-        # Reconstruct b2.
-        s = self.hidden_sizes[1]
-        self.b2 = genes[idx:idx+s]
-        idx += s
-        
-        # Reconstruct W3.
-        s = self.hidden_sizes[1] * self.output_size
-        self.W3 = genes[idx:idx+s].reshape((self.hidden_sizes[1], self.output_size))
-        idx += s
-        
-        # Reconstruct b3.
-        s = self.output_size
-        self.b3 = genes[idx:idx+s]
 
-class GeneticAlgorithmStrategy(BaseStrategy):
+    def set_weights(self, weights: np.ndarray):
+        n1 = self.layer1.n_in * self.layer1.n_out + self.layer1.n_out
+        n2 = self.layer2.n_in * self.layer2.n_out + self.layer2.n_out
+
+        self.layer1.set_weights(weights[:n1])
+        self.layer2.set_weights(weights[n1:n1 + n2])
+        self.layer3.set_weights(weights[n1 + n2:])
+
+
+# ---------------------------------------------------------------------------
+# Neuroevolution Strategy with Extinction Logic
+# ---------------------------------------------------------------------------
+
+class RNNGeneticStrategy(BaseStrategy):
     """
-    A strategy that uses a Genetic Algorithm to evolve Random Neural Networks
-    for navigating the robot to the goal.
+    RNN - Random Neural Network 
+
+    Genetic-algorithm neuroevolution strategy using a standard feedforward
+    neural network (FFNN) in place of the spiking LIF network.
+
+    Parameters
+    ----------
+    population_size : number of agents per generation
+    generations     : maximum number of generations per trial
+    num_trials      : number of independent trials to run
+    mutation_rate   : probability of mutating each weight
+    mutation_mag    : standard deviation of Gaussian mutation noise
+    weights_dir     : directory where per-generation weights are saved
+    hidden_size     : width of the first hidden layer in each network
     """
-    def __init__(self, population_size=100, num_generations=30, mutation_rate=0.1, mutation_scale=0.1, survivor_ratio=0.2, load_weights=None):
-        """
-        Initializes the Genetic Algorithm strategy.
-        
-        Args:
-            population_size (int): The number of neural networks in each generation.
-            num_generations (int): The number of generations to simulate.
-            mutation_rate (float): The probability of mutating a single gene.
-            mutation_scale (float): The standard deviation of the Gaussian mutation noise.
-            survivor_ratio (float): The fraction of the population that survives to the next generation.
-            load_weights (str): Path to a directory with JSON weight files from a previous run.
-        """
-        super().__init__("ga", {
+
+    def __init__(self, population_size: int = 50,
+                 generations: int = 20,
+                 num_trials: int = 3,
+                 mutation_rate: float = 0.2,
+                 mutation_mag: float = 0.5,
+                 load_weights: bool = False,
+                 weights_dir: str = "ffnn_weights",
+                 hidden_size: int = 64):
+        params = {
             "population_size": population_size,
-            "num_generations": num_generations,
+            "generations": generations,
+            "num_trials": num_trials,
             "mutation_rate": mutation_rate,
-            "mutation_scale": mutation_scale,
-            "survivor_ratio": survivor_ratio,
-            "load_weights": load_weights
-        })
-        self.population_size = population_size
-        self.num_generations = num_generations
+            "mutation_mag": mutation_mag,
+            "weights_dir": weights_dir,
+            "hidden_size": hidden_size,
+        }
+        super().__init__("ffnn_genetic", params)
+
+        self.pop_size = population_size
+        self.max_gens = generations
+        self.num_trials = num_trials
         self.mutation_rate = mutation_rate
-        self.mutation_scale = mutation_scale
-        self.survivor_ratio = survivor_ratio
-        self.load_weights = load_weights
+        self.mutation_mag = mutation_mag
+        self.weights_dir = weights_dir
+        self.hidden_size = hidden_size
 
-    def _crossover(self, parent1_genes: np.ndarray, parent2_genes: np.ndarray) -> np.ndarray:
-        """
-        Performs uniform crossover between two parents to produce a child.
-        
-        Args:
-            parent1_genes (np.ndarray): The 1D genetic array of the first parent.
-            parent2_genes (np.ndarray): The 1D genetic array of the second parent.
-            
-        Returns:
-            np.ndarray: The resulting child genetic array.
-        """
-        # Create a boolean mask of the same length as the genes using np.random.rand.
-        # True means take gene from parent1, False means take from parent2.
-        mask = np.random.rand(len(parent1_genes)) > 0.5
-        # Vectorized conditional selection using np.where. This recombines genes extremely fast 
-        # without standard Python loops.
-        child_genes = np.where(mask, parent1_genes, parent2_genes)
-        return child_genes
+        os.makedirs(self.weights_dir, exist_ok=True)
 
-    def _mutate(self, genes: np.ndarray) -> np.ndarray:
-        """
-        Mutates a subset of genes by adding random Gaussian noise.
-        
-        Args:
-            genes (np.ndarray): The 1D genetic array to mutate.
-            
-        Returns:
-            np.ndarray: The mutated genetic array.
-        """
-        # Create a boolean mask where True indicates the gene will be mutated based on mutation_rate.
-        mask = np.random.rand(len(genes)) < self.mutation_rate
-        # Generate random Gaussian noise for every gene, scaled by mutation_scale.
-        mutations = np.random.randn(len(genes)) * self.mutation_scale
-        # Apply the mutations only to the genes selected by the boolean mask in a vectorized manner.
-        genes[mask] += mutations[mask]
-        return genes
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
 
     def run(self, env):
-        """
-        Executes the genetic algorithm experiment loop.
-        
-        Args:
-            env (RobotExplorationEnv): The simulation environment.
-            
-        Returns:
-            tuple: (total steps taken, final environment coverage)
-        """
-        # 1. Initialization
-        population = []
-        loaded_elites = []
-        
-        if self.load_weights and os.path.isdir(self.load_weights):
-            print(f"[INFO] Loading previous generation weights from: {self.load_weights}")
-            for filename in os.listdir(self.load_weights):
-                if filename.endswith(".json"):
-                    filepath = os.path.join(self.load_weights, filename)
-                    with open(filepath, 'r') as f:
-                        data = json.load(f)
-                    
-                    nn = NeuralNetwork(input_size=env.num_rays, hidden_sizes=[16, 16], output_size=4)
-                    nn.W1 = np.array(data["W1"])
-                    nn.b1 = np.array(data["b1"])
-                    nn.W2 = np.array(data["W2"])
-                    nn.b2 = np.array(data["b2"])
-                    nn.W3 = np.array(data["W3"])
-                    nn.b3 = np.array(data["b3"])
-                    loaded_elites.append(nn)
-                    population.append(nn)
-                    
-            if not loaded_elites:
-                print(f"[WARNING] No .json files found in {self.load_weights}. Starting with completely random weights.")
-            else:
-                print(f"[INFO] Successfully loaded {len(loaded_elites)} robots.")
+        import time
 
-        # Fill the rest of the starting population
-        # If we loaded elites, we recombine and mutate them to fill the population.
-        # Otherwise, we fill with completely random neural networks.
-        while len(population) < self.population_size:
-            if loaded_elites:
-                p1_idx, p2_idx = np.random.choice(len(loaded_elites), size=2, replace=True) if len(loaded_elites) > 1 else (0, 0)
-                parent1 = loaded_elites[p1_idx]
-                parent2 = loaded_elites[p2_idx]
-                
-                child_genes = self._crossover(parent1.get_genes(), parent2.get_genes())
-                child_genes = self._mutate(child_genes)
-                
-                child_nn = NeuralNetwork(input_size=env.num_rays, hidden_sizes=[16, 16], output_size=4)
-                child_nn.set_genes(child_genes)
-                population.append(child_nn)
-            else:
-                population.append(NeuralNetwork(input_size=env.num_rays, hidden_sizes=[16, 16], output_size=4))
-        
-        # Truncate to exact population size just in case we loaded more JSONs than population size
-        population = population[:self.population_size]
-        
-        total_steps = 0
-        
-        # Prepare CSV file for automatic logging
-        csv_filepath = os.path.join(env.output_dir, "generation_results.csv")
-        with open(csv_filepath, 'w') as f:
-            f.write("Generation,% of Generation Successful,Average Success Path Length,Average Success Energy Remaining,Average Success Health,Average Distance to Reward,Weights Directory\n")
-        
-        # Output table headers matching exactly the requirements
-        print(f"\n{'-'*130}")
-        print(f"{'Generation':<10} | {'% Success':<10} | {'Avg Path Length':<15} | {'Avg Energy Rem':<15} | {'Avg Health Rem':<15} | {'Avg Dist to Reward':<18} | {'Weights Directory'}")
-        print(f"{'-'*130}")
-        
-        for generation in range(1, self.num_generations + 1):
-            # Pre-allocate numpy arrays to track metrics for the whole population
-            fitness_scores = np.zeros(self.population_size)
-            success_flags = np.zeros(self.population_size, dtype=bool)
-            path_lengths = np.zeros(self.population_size)
-            energy_remains = np.zeros(self.population_size)
-            health_remains = np.zeros(self.population_size)
-            dists_to_reward = np.zeros(self.population_size)
-            
-            # Evaluate each candidate in the population
-            for i, nn in enumerate(population):
-                obs = env.reset()
-                done = False
-                
-                min_dist_to_reward = float('inf')
-                
-                while not done:
-                    # Normalize observation (LIDAR distances) to [0, 1] range to prevent large 
-                    # input values from causing exploding gradients/activations in the neural network.
-                    normalized_obs = obs / env.ray_length
-                    
-                    # Forward pass through the neural network to get the action
-                    action = nn.get_action(normalized_obs)
-                    
-                    # Step the environment
-                    obs, reward, done, info = env.step(action)
-                    total_steps += 1
-                    
-                    # Calculate Euclidean distance to reward using Pythagoras.
-                    # We track the minimum distance achieved during the episode for fitness evaluation.
-                    dx = env.robot_x - env.goal_x
-                    dy = env.robot_y - env.goal_y
-                    current_dist = np.sqrt(dx*dx + dy*dy)
-                    if current_dist < min_dist_to_reward:
-                        min_dist_to_reward = current_dist
-                        
-                    if env.render_flag:
-                        env.render()
-                
-                # Evaluation Metrics Collection
-                success = info.get('goal_reached', False)
-                
-                # Fitness Function Logic:
-                # We want to minimize the minimum distance to the reward. Adding 1e-6 prevents division by zero.
-                # If the goal is reached, give a massive fitness boost (1000.0) so they are practically 
-                # guaranteed to be selected as elites for replication.
-                fitness = 1.0 / (min_dist_to_reward + 1e-6)
-                if success:
-                    fitness += 1000.0
-                    
-                fitness_scores[i] = fitness
-                success_flags[i] = success
-                path_lengths[i] = env.current_step
-                energy_remains[i] = info.get('energy', 0)
-                health_remains[i] = info.get('health', 0)
-                dists_to_reward[i] = min_dist_to_reward
-                
-            # Compute Generation Statistics for the Table
-            percent_success = (np.sum(success_flags) / self.population_size) * 100.0
-            
-            if np.any(success_flags):
-                avg_path = np.mean(path_lengths[success_flags])
-                avg_energy = np.mean(energy_remains[success_flags])
-                avg_health = np.mean(health_remains[success_flags])
-            else:
-                avg_path = 0.0
-                avg_energy = 0.0
-                avg_health = 0.0
-                
-            avg_dist = np.mean(dists_to_reward)
-            
-            # Create a specific directory to save this generation's successful weights
-            gen_weights_dir = os.path.join(env.output_dir, f"gen_{generation}_weights")
-            os.makedirs(gen_weights_dir, exist_ok=True)
-            
-            # Selection: successful creatures survive while those that couldn't cope die out
-            # Sort population descending by fitness. np.argsort returns ascending, so we slice [::-1]
-            sorted_indices = np.argsort(fitness_scores)[::-1]
-            num_survivors = max(1, int(self.population_size * self.survivor_ratio))
-            
-            # If there are actual successes, we could optionally only keep those, but to keep 
-            # the GA moving when there are no successes, we always keep the top `num_survivors`.
-            elite_indices = sorted_indices[:num_survivors]
-            elites = [population[idx] for idx in elite_indices]
-            
-            # Replication: Save weights of successful/elite robots
-            for rank, idx in enumerate(elite_indices):
-                elite_nn = population[idx]
-                weights = {
-                    "W1": elite_nn.W1.tolist(),
-                    "b1": elite_nn.b1.tolist(),
-                    "W2": elite_nn.W2.tolist(),
-                    "b2": elite_nn.b2.tolist(),
-                    "W3": elite_nn.W3.tolist(),
-                    "b3": elite_nn.b3.tolist()
-                }
-                # Save the weights to the Weights Directory
-                weight_file = os.path.join(gen_weights_dir, f"rank_{rank}_fitness_{fitness_scores[idx]:.4f}.json")
-                with open(weight_file, 'w') as f:
-                    json.dump(weights, f)
-            
-            # Print row for the current generation table
-            print(f"{generation:<10} | {percent_success:<9.1f}% | {avg_path:<15.1f} | {avg_energy:<15.1f} | {avg_health:<15.1f} | {avg_dist:<18.1f} | {gen_weights_dir}")
-            
-            # Write row to CSV
-            with open(csv_filepath, 'a') as f:
-                f.write(f"{generation},{percent_success:.1f}%,{avg_path:.1f},{avg_energy:.1f},{avg_health:.1f},{avg_dist:.1f},{gen_weights_dir}\n")
-            
-            # If this is the last generation, we stop
-            if generation == self.num_generations:
-                break
-                
-            # Create next generation
-            new_population = []
-            
-            # Replication: duplication of successful creatures (elites carry over directly)
-            for elite in elites:
-                new_nn = NeuralNetwork(input_size=env.num_rays, hidden_sizes=[16, 16], output_size=4)
-                new_nn.set_genes(elite.get_genes().copy())
-                new_population.append(new_nn)
-                
-            # Recombination & Mutation to fill the rest of the generation
-            while len(new_population) < self.population_size:
-                # Randomly select two distinct parents from the successful creatures (elites)
-                if len(elites) > 1:
-                    p1_idx, p2_idx = np.random.choice(len(elites), size=2, replace=False)
-                else:
-                    p1_idx, p2_idx = 0, 0
-                    
-                parent1 = elites[p1_idx]
-                parent2 = elites[p2_idx]
-                
-                # Recombination: mixing up of the genes from successful creatures to form a new creature
-                child_genes = self._crossover(parent1.get_genes(), parent2.get_genes())
-                
-                # Mutation: slight changes in the genetic code of new creatures
-                child_genes = self._mutate(child_genes)
-                
-                # Instantiate new creature with the combined and mutated genetic code
-                child_nn = NeuralNetwork(input_size=env.num_rays, hidden_sizes=[16, 16], output_size=4)
-                child_nn.set_genes(child_genes)
-                new_population.append(child_nn)
-                
-            population = new_population
+        results_file = os.path.join(env.output_dir, "trial_metrics.csv")
+        headers = [
+            "Run", "Generation", "% Success",
+            "Avg Path Length", "Avg Energy Rem", "Avg Health Rem",
+            "Avg Dist to Reward", "Gen Total Steps",
+            "Gen Time (s)", "ms/Step", "Weights Directory",
+        ]
 
-        print(f"{'-'*130}")
-        # Return total steps taken and final coverage (from the very last episode run)
-        return total_steps, env._get_coverage()
+        with open(results_file, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+
+            for trial in range(1, self.num_trials + 1):
+
+                gen_pbar = tqdm(
+                    range(1, self.max_gens + 1),
+                    desc=f"Trial {trial}/{self.num_trials}",
+                    unit="gen",
+                    position=0,
+                )
+
+                # Initialise population
+                population = [
+                    FeedforwardNeuralNetwork(
+                        input_size=env.num_rays,
+                        hidden_size=self.hidden_size,
+                    )
+                    for _ in range(self.pop_size)
+                ]
+
+                for gen in gen_pbar:
+                    survivors = []
+                    gen_stats = {
+                        "path_lengths": [],
+                        "energies": [],
+                        "healths": [],
+                        "dist_to_reward": [],
+                    }
+
+                    gen_start_time = time.time()
+                    gen_total_steps = 0
+
+                    ind_pbar = tqdm(
+                        enumerate(population),
+                        total=self.pop_size,
+                        desc=f"  Gen {gen} Progress",
+                        leave=False,
+                        unit="ind",
+                        position=1,
+                    )
+
+                    for idx, net in ind_pbar:
+                        obs = env.reset()
+                        net.reset_state()   # no-op for FFNN; kept for API parity
+                        done = False
+
+                        while not done:
+                            normalized_obs = obs / env.ray_length
+
+                            # Forward pass → action probabilities → greedy action
+                            action_probs = net.forward(normalized_obs)
+                            action = int(np.argmax(action_probs))
+
+                            obs, reward, done, info = env.step(action)
+                            gen_total_steps += 1
+
+                            if env.render_flag:
+                                env.render()
+
+                        if info.get("goal_reached", False):
+                            survivors.append(net)
+                            gen_stats["path_lengths"].append(env.current_step)
+                            gen_stats["energies"].append(info["energy"])
+                            gen_stats["healths"].append(info["health"])
+
+                        dx = env.robot_x - env.goal_x
+                        dy = env.robot_y - env.goal_y
+                        dist = np.sqrt(dx * dx + dy * dy)
+                        gen_stats["dist_to_reward"].append(dist)
+
+                        ind_pbar.set_postfix({
+                            "Found": len(survivors),
+                            "Dist": f"{dist:.1f}",
+                        })
+
+                    # ── timing ──────────────────────────────────────────────
+                    gen_duration = time.time() - gen_start_time
+                    ms_per_step = (
+                        (gen_duration * 1000) / gen_total_steps
+                        if gen_total_steps > 0 else 0
+                    )
+
+                    success_rate = len(survivors) / self.pop_size
+                    avg_path = (
+                        np.mean(gen_stats["path_lengths"]) if survivors else 0
+                    )
+                    avg_dist = np.mean(gen_stats["dist_to_reward"])
+
+                    gen_pbar.set_postfix({
+                        "SR": f"{success_rate * 100:.1f}%",
+                        "ms/st": f"{ms_per_step:.2f}",
+                        "Steps": gen_total_steps,
+                    })
+
+                    # ── save weights ────────────────────────────────────────
+                    # gen_dir = os.path.join(
+                    #     self.weights_dir, f"trial_{trial}_gen_{gen}"
+                    # )
+                    # os.makedirs(gen_dir, exist_ok=True)
+                    # if survivors:
+                    #     with open(
+                    #         os.path.join(gen_dir, "best_survivor.json"), 'w'
+                    #     ) as wf:
+                    #         json.dump(
+                    #             {"weights": survivors[0].get_weights().tolist()},
+                    #             wf,
+                    #         )
+
+                    # ── log row ─────────────────────────────────────────────
+                    row = [
+                        trial, gen,
+                        f"{success_rate * 100:.2f}%",
+                        f"{avg_path:.2f}",
+                        f"{np.mean(gen_stats['energies']) if survivors else 0:.2f}",
+                        f"{np.mean(gen_stats['healths'])  if survivors else 0:.2f}",
+                        f"{avg_dist:.2f}",
+                        gen_total_steps,
+                        f"{gen_duration:.2f}",
+                        f"{ms_per_step:.2f}",
+                        None,
+                    ]
+                    writer.writerow(row)
+                    f.flush()
+
+                    # ── extinction check ─────────────────────────────────────
+                    if not survivors:
+                        gen_pbar.write(
+                            f"[EXTINCT] Trial {trial} Gen {gen} — No survivors."
+                        )
+                        break
+
+                    population = self._reproduce(survivors)
+
+        return 0, 0
+
+    # ------------------------------------------------------------------
+    # Reproduction: elitism + mutation
+    # ------------------------------------------------------------------
+
+    def _reproduce(self, survivors: list) -> list:
+        """
+        Build the next generation from survivors.
+
+        Strategy
+        --------
+        1. Elitism  — top 10 % of survivors carry over unchanged.
+        2. Mutation — remaining slots filled by randomly chosen survivors
+                      whose weights are perturbed with Gaussian noise.
+
+        Parameters
+        ----------
+        survivors : list of FeedforwardNeuralNetwork instances that reached
+                    the goal this generation.
+
+        Returns
+        -------
+        new_population : list of FeedforwardNeuralNetwork (length = pop_size)
+        """
+        new_population: list = []
+
+        # Elites
+        n_elite = max(1, self.pop_size // 10)
+        new_population.extend(survivors[:n_elite])
+
+        # Fill remainder via mutation
+        while len(new_population) < self.pop_size:
+            parent = random.choice(survivors)
+            child_weights = parent.get_weights().copy()
+
+            # Gaussian perturbation on a random subset of weights
+            mask = np.random.random(len(child_weights)) < self.mutation_rate
+            child_weights[mask] += (
+                np.random.randn(mask.sum()) * self.mutation_mag
+            )
+
+            child = FeedforwardNeuralNetwork(
+                input_size=parent.input_size,
+                hidden_size=parent.hidden_size,
+                output_size=parent.output_size,
+            )
+            child.set_weights(child_weights)
+            new_population.append(child)
+
+        return new_population

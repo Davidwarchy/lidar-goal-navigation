@@ -15,9 +15,17 @@ def get_map_path(env_filename):
     """Return full path to environment image."""
     return os.path.join(IMAGES_DIR, env_filename)
 
-def load_strategy(name, alpha=None, min_step=None, max_step=None, 
-                  population_size=100, num_generations=30, num_trials=3, 
-                  load_weights=None):
+def load_strategy(name, 
+                  alpha=None, 
+                  min_step=None, 
+                  max_step=None, 
+                  num_trials=3, 
+                  num_generations=30, 
+                  population_size=100, 
+                  mutation_rate=0.1,
+                  load_weights=False,
+                  weights_dir="weights"
+                  ):
     """Load strategy class based on name."""
     if name == "random":
         from strategies.random_walk import RandomWalkStrategy
@@ -48,11 +56,14 @@ def load_strategy(name, alpha=None, min_step=None, max_step=None,
             weights_dir="spike_weights"
         )
     if name == "ga":
-        from strategies.genetic_algorithm import GeneticAlgorithmStrategy
-        return GeneticAlgorithmStrategy(
+        from strategies.genetic_algorithm import RNNGeneticStrategy
+        return RNNGeneticStrategy(
+            num_trials=num_trials,
+            generations=num_generations,
             population_size=population_size, 
-            num_generations=num_generations, 
-            load_weights=load_weights
+            mutation_rate=mutation_rate,
+            load_weights=load_weights,
+            weights_dir=weights_dir
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -92,12 +103,21 @@ def parse_args():
     parser.add_argument("--min_step", type=float, default=1.0)
     parser.add_argument("--max_step_len", type=float, default=200.0)
     parser.add_argument("--load_weights", type=str, default=None, help="Path to weights")
+    parser.add_argument("--weights_dir", type=str, default="ga_weights", help="Directory to save/load weights")
+    parser.add_argument("--mutation_rate", type=float, default=0.1, help="Mutation rate for genetic algorithm")
+
     # Choose environment
     parser.add_argument(
         "--env",
         type=str,
         default="6.png",
         help="Environment image filename (from environments/images)"
+    )
+
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable verbose output"
     )
 
     return parser.parse_args()
@@ -123,7 +143,8 @@ def main():
         render=args.render,
         max_steps=args.max_steps,
         strategy_name=strategy.name,
-        strategy_parameters=strategy.parameters
+        strategy_parameters=strategy.parameters,
+        verbose=args.verbose
     )
 
     print(f"\nRunning {strategy.name} on {args.env}...")
@@ -154,7 +175,9 @@ if __name__ == "__main__":
     main()
 
     # example commands
-    # --- RANDOM --- 
+    # --- RANDOM WALK --- 
     # python main.py --strategy random --max_steps 1000 --env 6.png
     # --- SPIKING --- 
     # python main.py --strategy spike_nn --trials 50 --generations 50 --population 1000 --max_steps 1000 --env 6.png
+    # --- GA --- 
+    # python main.py --strategy ga --trials 5 --generations 5 --population 10 --max_steps 1000 --env 6.png

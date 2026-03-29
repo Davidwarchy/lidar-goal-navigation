@@ -9,7 +9,6 @@ Key Features:
 - Population of neural networks (not just one)
 - Genetic algorithm: selection, crossover, mutation
 - Energy system: each step costs 1 energy point
-- Exploration-based fitness: reward based on coverage and distance traveled
 
 Neural Network:
 - Leaky Integrate-and-Fire (LIF) Spiking Neural Network
@@ -20,7 +19,7 @@ Neural Network:
 
 Fitness Metrics Tracked:
 - Generation: Current iteration number
-- % of Generation Successful: Percentage of agents that achieved good coverage
+- % of Generation Successful: Percentage of agents that survived (reached goal)
 - Average Success Path Length: Average steps taken by successful agents
 - Average Success Energy Remaining: Average energy left for successful agents
 - Average Success Health: Same as energy remaining
@@ -35,7 +34,8 @@ import csv
 import random
 from datetime import datetime
 from .base_strategy import BaseStrategy
-from tqdm import tqdm 
+from tqdm import tqdm
+
 
 # ---------------------------------------------------------------------------
 # Leaky Integrate-and-Fire Spiking Neural Network

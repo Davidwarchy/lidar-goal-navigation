@@ -4,6 +4,7 @@ from .levy_walk import LevyWalkStrategy
 from .manual_control import ManualControlStrategy
 from .uniform import UniformRunLengthStrategy
 from .spiking import SpikeNNGeneticStrategy
+from .genetic_algorithm import RNNGeneticStrategy
 
 __all__ = [
     'BaseStrategy',
@@ -12,4 +13,5 @@ __all__ = [
     'ManualControlStrategy', 
     'UniformRunLengthStrategy',
     'SpikeNNGeneticStrategy',
+    'RNNGeneticStrategy'
 ]
