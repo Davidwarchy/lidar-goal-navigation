@@ -45,6 +45,7 @@ class RobotExplorationEnv:
                  cache_size=1000,
                  enable_coverage=False,
                  use_lut=False,
+                 continue_after_goal=False,
                  verbose=False
                  ): 
 
@@ -163,6 +164,8 @@ class RobotExplorationEnv:
 
         if self.use_lut:
             self._load_lut()
+
+        self.continue_after_goal = continue_after_goal
     
         # Save metadata immediately
         self._save_metadata()
@@ -378,9 +381,13 @@ class RobotExplorationEnv:
         # Step bookkeeping
         self.current_step += 1
         self.energy -= 1
-        
-        done = (self.energy <= 0 or self.health <= 0 or 
-                self.current_step >= self.max_steps or goal_reached)
+
+        # Logic to ignore goal_reached if the flag is set
+        if self.continue_after_goal:
+            done = self.current_step >= self.max_steps
+        else:
+            done = (self.energy <= 0 or self.health <= 0 or 
+                    self.current_step >= self.max_steps or goal_reached)
         
         info = {
             "new_cells": new_cells, 

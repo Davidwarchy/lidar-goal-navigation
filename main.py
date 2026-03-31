@@ -126,6 +126,12 @@ def parse_args():
         help="Use precomputed LUT for high-speed simulation (non-render only)"
     )
 
+    parser.add_argument(
+        "--continue_after_goal",
+        action="store_true",
+        help="Continue simulation even after reaching the reward until max_steps"
+    )
+
     return parser.parse_args()
 
 def main():
@@ -151,6 +157,7 @@ def main():
         strategy_name=strategy.name,
         strategy_parameters=strategy.parameters,
         use_lut=args.use_lut,
+        continue_after_goal=args.continue_after_goal,
         verbose=args.verbose
     )
 
@@ -188,3 +195,5 @@ if __name__ == "__main__":
     # python main.py --strategy spike_nn --trials 50 --generations 50 --population 1000 --max_steps 1000 --env 6.png
     # --- GA --- 
     # python main.py --strategy ga --trials 5 --generations 5 --population 10 --max_steps 1000 --env 6.png
+    # --- PROFILING ---
+    # python -m cProfile -s tottime main.py --strategy random --env 6.png --use_lut --max_steps 100_000 --continue_after_goal > xprofile.txt
