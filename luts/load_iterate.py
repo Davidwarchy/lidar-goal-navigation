@@ -90,4 +90,4 @@ def run_lut_system(env_name="6.png", num_angles=360, num_samples=1000, render=Tr
 if __name__ == "__main__":
     run_lut_system("6.png", 360, num_samples=100_000, render=False)
 
-    #  python .\luts\load_iterate.py
+    #  python .\luts\load_iterate.py (0.030ms per step)
