@@ -36,7 +36,6 @@ from datetime import datetime
 from .base_strategy import BaseStrategy
 from tqdm import tqdm
 
-
 # ---------------------------------------------------------------------------
 # Leaky Integrate-and-Fire Spiking Neural Network
 # ---------------------------------------------------------------------------
