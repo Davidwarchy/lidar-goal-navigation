@@ -6,3 +6,4 @@ meta/
 spike_weights/*
 x.* 
 venv
+.ipynb_checkpoints
