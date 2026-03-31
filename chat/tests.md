@@ -6,3 +6,6 @@ Output Schema Validation: Automate a check to ensure that after a run, the expec
 - Random Neural Nets 
 - Stochastic policy 
 - Continuous motion 
+
+- options for saving example files: weights, goal position, start pose , env 
+
