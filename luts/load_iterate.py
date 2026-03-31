@@ -33,9 +33,17 @@ def run_lut_system(env_name="6.png", num_angles=360, num_samples=1000, render=Tr
     free_y, free_x = np.where(obstacle_map == 0)
     free_points = list(zip(free_x, free_y))
 
-    print(f"[INFO] Map: {env_name} ({w}x{h})")
-    print(f"[INFO] LUT: {lut_filename} | Angles: {num_angles}")
-    print(f"[INFO] Mode: {'Rendering' if render else 'Headless Benchmark'}")
+    # --- OPTIMIZATION: PRE-COMPUTATION ---
+    # Instead of calling linspace 100,000 times, we define the sensor geometry once.
+    num_rays = 100
+    sensor_fan = np.linspace(-45, 45, num_rays) 
+    # Pre-calculate unit vectors for rendering to avoid sin/cos in the loop
+    fan_rad = np.radians(sensor_fan)
+    unit_cols = np.cos(fan_rad)
+    unit_rows = np.sin(fan_rad)
+    scale_factor = num_angles / 360.0
+    
+    print(f"[INFO] Running sequential benchmark for {num_samples} samples...")
 
     # 4. Execution Loop
     start_time = time.time()
@@ -44,22 +52,28 @@ def run_lut_system(env_name="6.png", num_angles=360, num_samples=1000, render=Tr
         rx, ry = random.choice(free_points)
         yaw = random.uniform(0, 360)
         
-        # Calculate LIDAR fan (standard 90-degree spread) 
-        # In this env, lidar_angles are typically -45 to 45 
-        ray_angles = np.linspace(yaw - 45, yaw + 45, 100)
-        angle_indices = ((ray_angles % 360) / 360 * num_angles).astype(np.int32) % num_angles
+        # Sequential Step 2: Observation (The optimized part)
+        # We broadcast the single 'yaw' across the pre-calculated 'sensor_fan'
+        ray_angles = (yaw + sensor_fan) % 360
+        angle_indices = (ray_angles * scale_factor).astype(np.int32, copy=False)
         
-        # Constant-time O(1) retrieval
+        # O(1) LUT Retrieval
         distances = lut[ry, rx, angle_indices]
 
         if render:
+            # Visualization logic remains sequential for the "single robot" feel
             display = cv2.resize(map_img, (w * scale, h * scale), interpolation=cv2.INTER_NEAREST)
-            for ang, dist in zip(ray_angles, distances):
-                angle_rad = np.radians(ang % 360)
-                # Scale coordinates for the window 
+            # Use pre-calculated trig for the current yaw
+            yaw_rad = np.radians(yaw)
+            c, s = np.cos(yaw_rad), np.sin(yaw_rad)
+            
+            for j in range(num_rays):
+                dist = distances[j]
+                ang_total_rad = np.radians(ray_angles[j])
+                
                 s_pt = (int(rx * scale), int(ry * scale))
-                e_pt = (int((rx + dist * np.cos(angle_rad)) * scale),
-                        int((ry + dist * np.sin(angle_rad)) * scale))
+                e_pt = (int((rx + dist * np.cos(ang_total_rad)) * scale),
+                        int((ry + dist * np.sin(ang_total_rad)) * scale))
                 
                 # Yellow for obstacle hits, Gray for open space 
                 color = (0, 255, 255) if dist < (lut.max() - 1) else (120, 120, 120)
@@ -67,32 +81,13 @@ def run_lut_system(env_name="6.png", num_angles=360, num_samples=1000, render=Tr
 
             # Draw robot circle and heading 
             cv2.circle(display, (int(rx * scale), int(ry * scale)), int(2 * scale), (255, 0, 0), -1)
-            
-            cv2.putText(display, f"Pose {i+1}/{num_samples}", (10, 25), 
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
-            cv2.imshow("LUT Visualization", display)
-            
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            cv2.imshow("Sequential LUT Visualization", display)
+            if cv2.waitKey(1) & 0xFF == ord('q'): break
 
     end_time = time.time()
-    avg_ms = ((end_time - start_time) / num_samples) * 1000
-    print(f"\n=== Results ===")
-    print(f"Total Time: {end_time - start_time:.4f}s")
-    print(f"Avg per Pose: {avg_ms:.4f}ms")
-    
-    if render:
-        cv2.destroyAllWindows()
+    print(f"\n=== Results ===\nAvg per Pose: {((end_time - start_time) / num_samples) * 1000:.4f}ms")
 
 if __name__ == "__main__":
-    # Parameters to change
-    TARGET_IMAGE = "6.png"
-    ANGULAR_RES = 360
-    
-    # Run high-speed headless test
-    run_lut_system(TARGET_IMAGE, ANGULAR_RES, num_samples=100_000, render=False)
+    run_lut_system("6.png", 360, num_samples=100_000, render=False)
 
-    print("\nNow running with rendering enabled. Press 'q' to quit visualization.")
-    
-    # Run visual test
-    # run_lut_system(TARGET_IMAGE, ANGULAR_RES, num_samples=100, render=True)
+    #  python .\luts\load_iterate.py
