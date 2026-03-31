@@ -120,6 +120,12 @@ def parse_args():
         help="Enable verbose output"
     )
 
+    parser.add_argument(
+        "--use_lut",
+        action="store_true",
+        help="Use precomputed LUT for high-speed simulation (non-render only)"
+    )
+
     return parser.parse_args()
 
 def main():
@@ -144,6 +150,7 @@ def main():
         max_steps=args.max_steps,
         strategy_name=strategy.name,
         strategy_parameters=strategy.parameters,
+        use_lut=args.use_lut,
         verbose=args.verbose
     )
 
