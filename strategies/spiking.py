@@ -212,13 +212,16 @@ class SpikingNeuralNetwork:
 
 class SpikeNNGeneticStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
-                 mutation_rate=0.2, mutation_mag=0.5, weights_dir="spike_weights"):
+                 mutation_rate=0.2, mutation_mag=0.5, weights_dir="spike_weights",
+                 action_space="discrete", action_distribution="deterministic"):
         params = {
             "population_size": population_size,
             "generations": generations,
             "num_trials": num_trials,
             "mutation_rate": mutation_rate,
-            "weights_dir": weights_dir
+            "weights_dir": weights_dir,
+            "action_space": action_space,
+            "action_distribution": action_distribution
         }
         super().__init__("spike_nn", params)
         self.pop_size = population_size
@@ -227,6 +230,8 @@ class SpikeNNGeneticStrategy(BaseStrategy):
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
         self.weights_dir = weights_dir
+        self.action_space = action_space
+        self.action_distribution = action_distribution
         os.makedirs(self.weights_dir, exist_ok=True)
 
     def run(self, env):
@@ -271,7 +276,7 @@ class SpikeNNGeneticStrategy(BaseStrategy):
                         while not done:
                             normalized_obs = obs / env.ray_length
                             output = net.forward(normalized_obs)
-                            action = np.argmax(output)
+                            action = self._select_action(output)
                             obs, reward, done, info = env.step(action)
                             
                             # Increment total steps for the whole generation
@@ -347,3 +352,26 @@ class SpikeNNGeneticStrategy(BaseStrategy):
             new_population.append(child)
             
         return new_population
+    
+    def _select_action(self, output: np.ndarray) -> int:
+        """
+        Select action based on output and action distribution settings.
+        
+        Parameters
+        ----------
+        output : (output_size,) array of spike counts/activations
+        
+        Returns
+        -------
+        action : int - selected action index
+        """
+        if self.action_distribution == "stochastic":
+            # Stochastic policy: sample from categorical distribution
+            # Convert output to probabilities using softmax
+            exp_output = np.exp(output - np.max(output))  # numerical stability
+            probs = exp_output / np.sum(exp_output)
+            action = np.random.choice(len(output), p=probs)
+        else:
+            # Deterministic policy: use argmax
+            action = np.argmax(output)
+        return action
