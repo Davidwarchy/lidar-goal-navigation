@@ -37,7 +37,7 @@ class VectorRobotExplorationEnv:
                  map_image_path,
                  num_envs=1,
                  grid_width=None, grid_height=None,
-                 scale=2, fps=10,
+                 scale=2, fps=500,
                  robot_radius=5, num_rays=100, ray_length=200,
                  max_steps=1000,
                  wheel_base=4.0, wheel_radius=0.75, dt=0.2,
@@ -131,19 +131,27 @@ class VectorRobotExplorationEnv:
             self.use_lut = False
 
     def _save_metadata(self):
+        """Save comprehensive run metadata for the vectorized session."""
         metadata = {
             "run_datetime": datetime.now().isoformat(),
             "strategy_name": self.strategy_name,
             "num_envs": self.num_envs,
+            "max_steps": self.max_steps,
+            "continue_after_goal": self.continue_after_goal,
             "environment_parameters": {
                 "grid_width": self.grid_width,
                 "grid_height": self.grid_height,
-                "max_steps": self.max_steps,
+                "robot_radius": self.robot_radius,
+                "num_rays": self.num_rays,
+                "ray_length": self.ray_length,
                 "map_image": os.path.basename(self.map_image_path),
+                "use_lut": self.use_lut
             },
             "output_directory": self.output_dir
         }
-        with open(os.path.join(self.output_dir, "metadata.json"), 'w') as f:
+        
+        metadata_path = os.path.join(self.output_dir, "metadata.json")
+        with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=4)
 
     def reset(self):
@@ -183,7 +191,9 @@ class VectorRobotExplorationEnv:
         return start_x, start_y
 
     def step(self, actions):
-        # actions: np.ndarray of shape (num_envs,)
+        # Only decrement health for robots that are still active (not done)
+        active_mask = ~self.done
+        
         v_left = np.zeros(self.num_envs)
         v_right = np.zeros(self.num_envs)
 
@@ -195,25 +205,34 @@ class VectorRobotExplorationEnv:
 
         # Update positions
         self._update_robot_positions(v_left, v_right)
-
-        # Get LIDAR observations
+        # 2. Get Perception
         obs = self._get_observation()
 
-        # Rewards and Success
+        # 3. Check for Success (Goal reached)
         dx = self.robot_x - self.goal_x
         dy = self.robot_y - self.goal_y
         goal_reached = (dx*dx + dy*dy) <= self.goal_success_dist ** 2
         
-        rewards = np.where(goal_reached, 1.0, 0.0)
+        # 4. Success handling
+        # Reward is only for the step they actually find it
+        rewards = np.where(goal_reached & active_mask, 1.0, 0.0)
+
+        # 5. Resource Depletion
+        # In 'Life on Silicon', every step costs 1 energy point 
+        # We only decrement if they haven't finished yet
+        self.energy[active_mask] -= 1
         
-        # Termination logic
-        self.current_step += 1
-        self.energy -= 1
-        
-        new_dones = (self.energy <= 0) | (self.health <= 0) | (self.current_step >= self.max_steps)
+        # 6. Final Termination Check
+        # If NOT continuing after goal, reaching it marks them as done immediately
         if not self.continue_after_goal:
-            new_dones |= goal_reached
-        
+            # Done if: No energy OR No health OR Reached Max Steps OR Reached Goal
+            new_dones = (self.energy <= 0) | (self.health <= 0) | \
+                        (self.current_step >= self.max_steps) | goal_reached
+        else:
+            # If continuing, they only stop when they physically 'die' or time runs out
+            new_dones = (self.current_step >= self.max_steps)
+
+        self.current_step += 1
         self.done |= new_dones
 
         return obs, rewards, self.done.copy(), {"goal_reached": goal_reached}

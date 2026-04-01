@@ -18,6 +18,11 @@ def parse_args():
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--env", type=str, default="6.png")
     parser.add_argument("--use_lut", action="store_true")
+    parser.add_argument(    
+        "--continue_after_goal",
+        action="store_true",
+        help="Continue simulation even after reaching the reward until max_steps"
+    )
     return parser.parse_args()
 
 def main():
@@ -30,7 +35,8 @@ def main():
         render=args.render,
         max_steps=args.max_steps,
         use_lut=args.use_lut,
-        strategy_name=args.strategy
+        strategy_name=args.strategy,
+        continue_after_goal=args.continue_after_goal
     )
 
     print(f"Running vectorized {args.strategy} with {args.num_envs} robots...")
@@ -51,7 +57,7 @@ def main():
             
             # 👇 print number of completed envs at this step
             num_dones = np.sum(dones)
-            
+
             print(f"step {step}: {num_dones} dones")
             
             if env.render_flag:
