@@ -191,6 +191,7 @@ if __name__ == "__main__":
     # example commands
     # --- RANDOM WALK --- 
     # python main.py --strategy random --max_steps 1000 --env 6.png
+    # python main.py --strategy random --env 6.png --use_lut --max_steps 100000 --continue_after_goal
     # --- SPIKING --- 
     # python main.py --strategy spike_nn --trials 50 --generations 50 --population 1000 --max_steps 1000 --env 6.png
     # --- GA --- 
