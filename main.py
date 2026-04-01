@@ -2,11 +2,25 @@ import argparse
 import os
 import sys
 import time
+import json
 
 # Add the current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from env import RobotExplorationEnv
+
+
+# Load default parameters from params.json
+def load_params():
+    """Load default parameters from params.json."""
+    params_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "params.json")
+    if os.path.exists(params_path):
+        with open(params_path, 'r') as f:
+            return json.load(f)
+    return {"action_space": "discrete", "action_distribution": "deterministic"}
+
+# Get default values from params.json
+DEFAULT_PARAMS = load_params()
 
 # Base path for environment images
 IMAGES_DIR = "environments/images"
@@ -24,7 +38,9 @@ def load_strategy(name,
                   population_size=100, 
                   mutation_rate=0.1,
                   load_weights=False,
-                  weights_dir="weights"
+                  weights_dir="weights",
+                  action_space="discrete",
+                  action_distribution="deterministic"
                   ):
     """Load strategy class based on name."""
     if name == "random":
@@ -53,7 +69,10 @@ def load_strategy(name,
             generations=num_generations,
             num_trials=num_trials,
             mutation_rate=0.3,
-            weights_dir="spike_weights"
+            weights_dir="spike_weights",
+            action_method="argmax",  #default method for taking an action.
+            action_space=action_space,
+            action_distribution=action_distribution
         )
     if name == "ga":
         from strategies.genetic_algorithm import RNNGeneticStrategy
@@ -79,7 +98,7 @@ def parse_args():
         choices=["random", "levy", "manual", "levy_custom", "uniform", "spike_nn", "ga"],
         help="Exploration strategy"
     )
-
+    
     parser.add_argument(
         "--max_steps",
         type=int,
@@ -92,7 +111,11 @@ def parse_args():
         action="store_true",
         help="Enable rendering"
     )
-
+    # Methods for taking an action
+    parser.add_argument("--action_method",type=str,default='argmax',help="Method for determining direction of the robot")
+    parser.add_argument("--action_space", type=str, default=DEFAULT_PARAMS.get("action_space", "discrete"), choices=["discrete", "continuous"], help="Action space type")
+    parser.add_argument("--action_distribution", type=str, default=DEFAULT_PARAMS.get("action_distribution", "deterministic"), choices=["deterministic", "stochastic"], help="Action selection method")
+    
     # New Evolutionary/Trial Arguments
     parser.add_argument("--trials", type=int, default=20, help="Number of independent trials") 
     parser.add_argument("--generations", type=int, default=50, help="Generations per trial") 
@@ -134,7 +157,9 @@ def main():
         population_size=args.population,
         num_generations=args.generations,
         num_trials=args.trials,
-        load_weights=args.load_weights
+        load_weights=args.load_weights,
+        action_space=args.action_space,
+        action_distribution=args.action_distribution
     )
 
     env = RobotExplorationEnv(
