@@ -1,0 +1,15 @@
+{
+    "action_space": "discrete",
+    "action_distribution": "deterministic",
+    "description": "Options for robot exploration run",
+    "options": {
+        "action_space": {
+            "continuous": "Continuous action space (float values for velocity/angle)",
+            "discrete": "Discrete action space (categorical actions)"
+        },
+        "action_distribution": {
+            "stochastic": "Stochastic policy - sample from categorical distribution",
+            "deterministic": "Deterministic policy - use argmax to select action"
+        }
+    }
+}
