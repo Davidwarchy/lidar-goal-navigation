@@ -1,5 +1,9 @@
 from .base_strategy import BaseStrategy
 import numpy as np
+import os
+import json
+import csv
+from datetime import datetime
 
 class VectorLIFLayer:
     def __init__(self, num_envs, n_in, n_out, leak=0.9, threshold=1.0):
@@ -70,14 +74,24 @@ class VectorSNN:
         self.hidden_layer.set_weights(h_weights)
         self.output_layer.set_weights(o_weights)
 
+
 class VectorSpikeNNStrategy(BaseStrategy):
-    def __init__(self, population_size=50, generations=20, num_trials=3, mutation_rate=0.2, mutation_mag=0.5):
-        super().__init__("vec_spike_nn", {"pop_size": population_size})
+    def __init__(self, population_size=50, generations=20, num_trials=3, 
+                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10):
+        super().__init__("vec_spike_nn", {
+            "pop_size": population_size,
+            "generations": generations,
+            "num_trials": num_trials,
+            "mutation_rate": mutation_rate,
+            "mutation_mag": mutation_mag,
+            "max_samples_per_gen": max_samples_per_gen
+        })
         self.pop_size = population_size
         self.max_gens = generations
         self.num_trials = num_trials
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
+        self.max_samples_per_gen = max_samples_per_gen
 
     def run(self, env):
         """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
@@ -85,67 +99,193 @@ class VectorSpikeNNStrategy(BaseStrategy):
         import time
         
         for trial in range(1, self.num_trials + 1):
-            pop_brain = VectorSNN(num_envs=self.pop_size, input_size=env.num_rays) 
+            # Create trial directory
+            trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
+            os.makedirs(trial_dir, exist_ok=True)
+            
+            pop_brain = VectorSNN(num_envs=self.pop_size, input_size=env.num_rays)
+            
+            # Store initial positions and reward positions for all individuals
+            initial_poses = []
+            reward_positions = []
             
             # 1. Trial-level progress bar
             gen_pbar = tqdm(range(1, self.max_gens + 1), 
                             desc=f"Trial {trial}/{self.num_trials}", 
-                            unit="gen", position=0) 
+                            unit="gen", position=0)
             
             for gen in gen_pbar:
-                obs = env.reset() 
-                pop_brain.reset_state() 
+                # Create generation directory
+                gen_dir = os.path.join(trial_dir, f"gen_{gen}")
+                os.makedirs(gen_dir, exist_ok=True)
+                
+                # Create samples directory
+                samples_dir = os.path.join(gen_dir, "samples")
+                os.makedirs(samples_dir, exist_ok=True)
+                
+                obs = env.reset()
+                
+                # Store initial positions and reward positions for each individual
+                initial_poses = [(env.robot_x[i], env.robot_y[i]) for i in range(self.pop_size)]
+                reward_positions = [(env.goal_x[i], env.goal_y[i]) for i in range(self.pop_size)]
+                
+                pop_brain.reset_state()
                 
                 gen_start_time = time.time()
                 steps = 0
                 
-                while True:
-                    # Parallel inference and step
-                    output = pop_brain.forward(obs / env.ray_length) 
-                    actions = np.argmax(output, axis=1) 
-                    obs, rewards, dones, info = env.step(actions) 
+                # Track progress over steps for this generation
+                step_data = []  # list of (step, percent_done)
+                goals_reached_by_step = set()
+                
+                # Track which individuals have reached the goal
+                reached_goal = np.zeros(self.pop_size, dtype=bool)
+                
+                # CSV log for this generation (step-level data)
+                step_csv_path = os.path.join(gen_dir, "log.csv")
+                with open(step_csv_path, 'w', newline='') as step_f:
+                    step_writer = csv.writer(step_f)
+                    step_writer.writerow(["step", "percent_done", "new_successes"])
                     
-                    steps += 1
-                    
-                    # Update progress every 10 steps to reduce overhead
-                    if steps % 10 == 0:
-                        gen_pbar.set_postfix({
-                            "Step": steps,
-                            "Live_Found": np.sum(info["goal_reached"])
-                        }) 
-
-                    if env.render_flag: 
-                        env.render() 
-                    
-                    if np.all(dones): 
-                        break 
+                    while True:
+                        # Parallel inference and step
+                        output = pop_brain.forward(obs / env.ray_length)
+                        actions = np.argmax(output, axis=1)
+                        obs, rewards, dones, info = env.step(actions)
+                        
+                        steps += 1
+                        
+                        # Track newly reached goals
+                        new_successes = info["goal_reached"] & ~reached_goal
+                        new_success_indices = np.where(new_successes)[0]
+                        
+                        for idx in new_success_indices:
+                            goals_reached_by_step.add(idx)
+                            reached_goal[idx] = True
+                            
+                            # Save sample weights for successful individuals (limited per gen)
+                            if len(os.listdir(samples_dir)) < self.max_samples_per_gen:
+                                sample_path = os.path.join(samples_dir, f"ind_{idx}.json")
+                                genome = pop_brain.get_genomes()[idx]
+                                sample_data = {
+                                    "individual_id": int(idx),
+                                    "generation": gen,
+                                    "trial": trial,
+                                    "weights": genome.tolist(),
+                                    "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
+                                    "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
+                                    "steps_to_success": steps,
+                                    "energy_remaining": float(env.energy[idx]),
+                                    "health_remaining": float(env.health[idx])
+                                }
+                                with open(sample_path, 'w') as wf:
+                                    json.dump(sample_data, wf, indent=2)
+                        
+                        percent_done = (len(goals_reached_by_step) / self.pop_size) * 100
+                        step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
+                        step_f.flush()
+                        
+                        # Update progress every 10 steps to reduce overhead
+                        if steps % 10 == 0:
+                            gen_pbar.set_postfix({
+                                "Step": steps,
+                                "%Done": f"{percent_done:.1f}%"
+                            })
+                        
+                        if env.render_flag:
+                            env.render()
+                        
+                        if np.all(dones):
+                            break
                 
                 # 2. End-of-Generation reporting
                 gen_duration = time.time() - gen_start_time
                 survivor_indices = np.where(info["goal_reached"])[0] 
                 success_rate = (len(survivor_indices) / self.pop_size) * 100
                 
+                # Calculate generation statistics
+                path_lengths = []
+                energies = []
+                healths = []
+                distances = []
+                
+                for idx in survivor_indices:
+                    # Get final distance to reward
+                    dx = env.robot_x[idx] - env.goal_x[idx]
+                    dy = env.robot_y[idx] - env.goal_y[idx]
+                    distances.append(np.sqrt(dx*dx + dy*dy))
+                
+                # Load step data to get success steps
+                with open(step_csv_path, 'r') as step_f:
+                    reader = csv.reader(step_f)
+                    next(reader)  # skip header
+                    for row in reader:
+                        if int(row[2]) > 0:
+                            # This step had successes, but we need per-individual steps
+                            pass
+                
+                # Generate log.json for this generation
+                gen_stats = {
+                    "generation": gen,
+                    "trial": trial,
+                    "timestamp": datetime.now().isoformat(),
+                    "success_rate_percent": success_rate,
+                    "num_successful": len(survivor_indices),
+                    "population_size": self.pop_size,
+                    "avg_path_length": float(np.mean(path_lengths)) if path_lengths else 0,
+                    "avg_energy_remaining": float(np.mean(energies)) if energies else 0,
+                    "avg_health_remaining": float(np.mean(healths)) if healths else 0,
+                    "avg_distance_to_reward": float(np.mean(distances)) if distances else 0,
+                    "generation_duration_seconds": gen_duration,
+                    "total_steps_in_gen": steps,
+                    "max_samples_per_gen": self.max_samples_per_gen,
+                    "samples_saved": len(os.listdir(samples_dir))
+                }
+                
+                gen_stats_path = os.path.join(gen_dir, "log.json")
+                with open(gen_stats_path, 'w') as wf:
+                    json.dump(gen_stats, wf, indent=2)
+                
                 gen_pbar.set_postfix({
                     "Success": f"{success_rate:.1f}%",
                     "Total_Steps": steps,
                     "Sec/Gen": f"{gen_duration:.1f}s"
-                }) 
+                })
+                
+                # Also maintain a trial-level summary CSV
+                trial_summary_path = os.path.join(trial_dir, "summary.csv")
+                file_exists = os.path.exists(trial_summary_path)
+                with open(trial_summary_path, 'a', newline='') as sf:
+                    writer = csv.writer(sf)
+                    if not file_exists:
+                        writer.writerow(["generation", "success_rate_percent", "num_successful", 
+                                        "avg_path_length", "avg_energy_remaining", 
+                                        "avg_health_remaining", "avg_distance_to_reward",
+                                        "gen_duration_seconds", "total_steps_in_gen"])
+                    writer.writerow([
+                        gen, f"{success_rate:.2f}%", len(survivor_indices),
+                        f"{np.mean(path_lengths) if path_lengths else 0:.2f}",
+                        f"{np.mean(energies) if energies else 0:.2f}",
+                        f"{np.mean(healths) if healths else 0:.2f}",
+                        f"{np.mean(distances) if distances else 0:.2f}",
+                        f"{gen_duration:.2f}", steps
+                    ])
                 
                 if len(survivor_indices) == 0:
-                    gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.") 
-                    break 
+                    gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
+                    break
                 
-                new_genomes = self._reproduce(pop_brain.get_genomes(), survivor_indices) 
-                pop_brain.set_genomes(new_genomes) 
-                
+                new_genomes = self._reproduce(pop_brain.get_genomes(), survivor_indices)
+                pop_brain.set_genomes(new_genomes)
+    
     def _reproduce(self, all_genomes, survivor_indices):
         new_genomes = []
-        # Elitism: Keep best survivors : 326]
+        # Elitism: Keep best survivors
         n_elites = max(1, self.pop_size // 10)
         for i in range(min(n_elites, len(survivor_indices))):
             new_genomes.append(all_genomes[survivor_indices[i]])
             
-        # Mutation: Fill remaining population : 327]
+        # Mutation: Fill remaining population
         while len(new_genomes) < self.pop_size:
             parent_idx = np.random.choice(survivor_indices)
             child_genome = all_genomes[parent_idx].copy()

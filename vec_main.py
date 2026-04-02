@@ -108,7 +108,7 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # Load strategy with user-defined evolutionary parameters 
+    # Load strategy with user-defined evolutionary parameters
     strategy = load_strategy(
         args.strategy,
         population_size=args.population,
@@ -116,20 +116,23 @@ def main():
         num_trials=args.trials
     )
 
-    # Initialize Environment with correct num_envs 
+    # Initialize Environment with correct num_envs
     env = VectorRobotExplorationEnv(
         map_image_path=get_map_path(args.env),
-        num_envs=args.population, # Match environment count to strategy population for vectorized processing 
+        num_envs=args.population,
         robot_radius=3,
         render=args.render,
         max_steps=args.max_steps,
         strategy_name=strategy.name,
-        use_lut=args.use_lut
+        use_lut=args.use_lut,
+        continue_after_goal=args.continue_after_goal,
+        verbose=args.verbose
     )
 
     print(f"Running vectorized {args.strategy} on {args.env}...")
+    print(f"Output directory: {env.output_dir}")
     
-    # Clean execution call: main doesn't need to know how the strategy works 
+    # Clean execution call
     strategy.run(env)
     
     env.close()
