@@ -105,10 +105,6 @@ class VectorSpikeNNStrategy(BaseStrategy):
             
             pop_brain = VectorSNN(num_envs=self.pop_size, input_size=env.num_rays)
             
-            # Store initial positions and reward positions for all individuals
-            initial_poses = []
-            reward_positions = []
-            
             # 1. Trial-level progress bar
             gen_pbar = tqdm(range(1, self.max_gens + 1), 
                             desc=f"Trial {trial}/{self.num_trials}", 
@@ -125,9 +121,16 @@ class VectorSpikeNNStrategy(BaseStrategy):
                 
                 obs = env.reset()
                 
-                # Store initial positions and reward positions for each individual
+                # Store initial positions, reward positions, and initial energy/health for each individual
                 initial_poses = [(env.robot_x[i], env.robot_y[i]) for i in range(self.pop_size)]
                 reward_positions = [(env.goal_x[i], env.goal_y[i]) for i in range(self.pop_size)]
+                
+                # Calculate initial distances to reward for each individual
+                initial_distances = []
+                for i in range(self.pop_size):
+                    dx = initial_poses[i][0] - reward_positions[i][0]
+                    dy = initial_poses[i][1] - reward_positions[i][1]
+                    initial_distances.append(np.sqrt(dx*dx + dy*dy))
                 
                 pop_brain.reset_state()
                 
@@ -135,11 +138,13 @@ class VectorSpikeNNStrategy(BaseStrategy):
                 steps = 0
                 
                 # Track progress over steps for this generation
-                step_data = []  # list of (step, percent_done)
                 goals_reached_by_step = set()
                 
-                # Track which individuals have reached the goal
+                # Track which individuals have reached the goal and their success metrics
                 reached_goal = np.zeros(self.pop_size, dtype=bool)
+                success_steps = np.full(self.pop_size, -1, dtype=int)
+                success_energy = np.full(self.pop_size, -1, dtype=float)
+                success_health = np.full(self.pop_size, -1, dtype=float)
                 
                 # CSV log for this generation (step-level data)
                 step_csv_path = os.path.join(gen_dir, "log.csv")
@@ -162,6 +167,9 @@ class VectorSpikeNNStrategy(BaseStrategy):
                         for idx in new_success_indices:
                             goals_reached_by_step.add(idx)
                             reached_goal[idx] = True
+                            success_steps[idx] = steps
+                            success_energy[idx] = env.energy[idx]
+                            success_health[idx] = env.health[idx]
                             
                             # Save sample weights for successful individuals (limited per gen)
                             if len(os.listdir(samples_dir)) < self.max_samples_per_gen:
@@ -173,10 +181,11 @@ class VectorSpikeNNStrategy(BaseStrategy):
                                     "trial": trial,
                                     "weights": genome.tolist(),
                                     "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
+                                    "initial_distance_to_reward": float(initial_distances[idx]),
                                     "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
-                                    "steps_to_success": steps,
-                                    "energy_remaining": float(env.energy[idx]),
-                                    "health_remaining": float(env.health[idx])
+                                    "steps_to_success": int(success_steps[idx]),
+                                    "energy_remaining": float(success_energy[idx]),
+                                    "health_remaining": float(success_health[idx])
                                 }
                                 with open(sample_path, 'w') as wf:
                                     json.dump(sample_data, wf, indent=2)
@@ -200,29 +209,14 @@ class VectorSpikeNNStrategy(BaseStrategy):
                 
                 # 2. End-of-Generation reporting
                 gen_duration = time.time() - gen_start_time
-                survivor_indices = np.where(info["goal_reached"])[0] 
+                survivor_indices = np.where(reached_goal)[0]
                 success_rate = (len(survivor_indices) / self.pop_size) * 100
                 
-                # Calculate generation statistics
-                path_lengths = []
-                energies = []
-                healths = []
-                distances = []
-                
-                for idx in survivor_indices:
-                    # Get final distance to reward
-                    dx = env.robot_x[idx] - env.goal_x[idx]
-                    dy = env.robot_y[idx] - env.goal_y[idx]
-                    distances.append(np.sqrt(dx*dx + dy*dy))
-                
-                # Load step data to get success steps
-                with open(step_csv_path, 'r') as step_f:
-                    reader = csv.reader(step_f)
-                    next(reader)  # skip header
-                    for row in reader:
-                        if int(row[2]) > 0:
-                            # This step had successes, but we need per-individual steps
-                            pass
+                # Calculate generation statistics for successful individuals
+                path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
+                energies = [success_energy[idx] for idx in survivor_indices if success_energy[idx] > 0]
+                healths = [success_health[idx] for idx in survivor_indices if success_health[idx] > 0]
+                initial_dists = [initial_distances[idx] for idx in survivor_indices]
                 
                 # Generate log.json for this generation
                 gen_stats = {
@@ -235,7 +229,7 @@ class VectorSpikeNNStrategy(BaseStrategy):
                     "avg_path_length": float(np.mean(path_lengths)) if path_lengths else 0,
                     "avg_energy_remaining": float(np.mean(energies)) if energies else 0,
                     "avg_health_remaining": float(np.mean(healths)) if healths else 0,
-                    "avg_distance_to_reward": float(np.mean(distances)) if distances else 0,
+                    "avg_initial_distance_to_reward": float(np.mean(initial_dists)) if initial_dists else 0,
                     "generation_duration_seconds": gen_duration,
                     "total_steps_in_gen": steps,
                     "max_samples_per_gen": self.max_samples_per_gen,
@@ -260,14 +254,14 @@ class VectorSpikeNNStrategy(BaseStrategy):
                     if not file_exists:
                         writer.writerow(["generation", "success_rate_percent", "num_successful", 
                                         "avg_path_length", "avg_energy_remaining", 
-                                        "avg_health_remaining", "avg_distance_to_reward",
+                                        "avg_health_remaining", "avg_initial_distance_to_reward",
                                         "gen_duration_seconds", "total_steps_in_gen"])
                     writer.writerow([
                         gen, f"{success_rate:.2f}%", len(survivor_indices),
                         f"{np.mean(path_lengths) if path_lengths else 0:.2f}",
                         f"{np.mean(energies) if energies else 0:.2f}",
                         f"{np.mean(healths) if healths else 0:.2f}",
-                        f"{np.mean(distances) if distances else 0:.2f}",
+                        f"{np.mean(initial_dists) if initial_dists else 0:.2f}",
                         f"{gen_duration:.2f}", steps
                     ])
                 
