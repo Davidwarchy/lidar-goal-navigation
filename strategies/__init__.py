@@ -3,8 +3,8 @@ from .random_walk import RandomWalkStrategy
 from .levy_walk import LevyWalkStrategy
 from .manual_control import ManualControlStrategy
 from .uniform import UniformRunLengthStrategy
-from .nn_spiking import NaturalSelectionNeuralNet
-from .nn_random import RNNGeneticStrategy
+from .nn import NaturalSelectionNeuralNet
+from .nn import NaturalSelectionNeuralNet
 from .vector_snn import VectorSpikeNNStrategy
 
 __all__ = [

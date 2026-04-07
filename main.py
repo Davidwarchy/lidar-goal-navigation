@@ -46,24 +46,25 @@ def load_strategy(name,
         from strategies.uniform import UniformRunLengthStrategy
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
-    if name == "spike_nn":
-        from strategies.nn_spiking import NaturalSelectionNeuralNet
+    if name == "spiking":
+        from strategies.nn import NaturalSelectionNeuralNet
         return NaturalSelectionNeuralNet(
             population_size=population_size,
             generations=num_generations,
             num_trials=num_trials,
             mutation_rate=0.3,
-            weights_dir="spike_weights"
+            weights_dir="spike_weights", 
+            network_type="spiking"
         )
-    if name == "ga":
-        from strategies.nn_random import RNNGeneticStrategy
-        return RNNGeneticStrategy(
-            num_trials=num_trials,
+    if name == "random_nn":
+        from strategies.nn import NaturalSelectionNeuralNet
+        return NaturalSelectionNeuralNet(
+            population_size=population_size,
             generations=num_generations,
-            population_size=population_size, 
-            mutation_rate=mutation_rate,
-            load_weights=load_weights,
-            weights_dir=weights_dir
+            num_trials=num_trials,
+            mutation_rate=0.3,
+            weights_dir="spike_weights", 
+            network_type="feedforward"
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -76,7 +77,7 @@ def parse_args():
         "--strategy",
         type=str,
         default="random",
-        choices=["random", "levy", "manual", "levy_custom", "uniform", "spike_nn", "ga"],
+        choices=["random", "levy", "manual", "levy_custom", "uniform", "spiking", "random_nn"],
         help="Exploration strategy"
     )
 
