@@ -10,7 +10,7 @@ import numpy as np
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from env import RobotExplorationEnv
-from strategies.vector_snn import VectorSNN
+from strategies.nn import VectorSNN
 
 
 def replay_individual(weight_path, map_name="6.png", render=True, max_steps=2000):

@@ -1,5 +1,5 @@
 """
-Spiking Neural Network (SNN) with Genetic Algorithm (Neuroevolution)
+Vectorized Neural Networks with Genetic Algorithm (Neuroevolution)
 
 This strategy implements a population-based neuroevolution system where
 multiple neural network agents compete in each generation. The best performing
@@ -32,7 +32,6 @@ import csv
 import random
 from datetime import datetime
 from .base_strategy import BaseStrategy
-from tqdm import tqdm
 from abc import ABC, abstractmethod
 
 
@@ -77,21 +76,25 @@ class NeuralNetwork(ABC):
 
 
 # ---------------------------------------------------------------------------
-# Feedforward Neural Network (Standard MLP)
+# Vectorized Feedforward Neural Network
 # ---------------------------------------------------------------------------
 
-class FeedforwardNetwork(NeuralNetwork):
+class VectorFeedforwardNetwork(NeuralNetwork):
     """
-    Standard multi-layer perceptron with ReLU activations.
+    Vectorized standard multi-layer perceptron with ReLU activations.
     
     Architecture:
     Input -> Hidden Layer(s) (ReLU) -> Output Layer (Linear)
+    
+    All agents are evaluated in parallel using vectorized operations.
     """
     
-    def __init__(self, input_size: int, hidden_sizes: list, output_size: int):
+    def __init__(self, num_envs: int, input_size: int, hidden_sizes: list, output_size: int):
         """
         Parameters:
         -----------
+        num_envs : int
+            Number of parallel agents
         input_size : int
             Dimensionality of input observations
         hidden_sizes : list of int
@@ -99,6 +102,7 @@ class FeedforwardNetwork(NeuralNetwork):
         output_size : int
             Number of output neurons (actions)
         """
+        self._num_envs = num_envs
         self._input_size = input_size
         self._output_size = output_size
         self.hidden_sizes = hidden_sizes
@@ -106,14 +110,14 @@ class FeedforwardNetwork(NeuralNetwork):
         # Build layer sizes
         layer_sizes = [input_size] + hidden_sizes + [output_size]
         
-        # Initialize weights and biases
+        # Initialize weights and biases for all agents
         self.weights = []
         self.biases = []
         
         for i in range(len(layer_sizes) - 1):
             # He initialization for ReLU
-            w = np.random.randn(layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2.0 / layer_sizes[i])
-            b = np.zeros(layer_sizes[i+1])
+            w = np.random.randn(num_envs, layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2.0 / layer_sizes[i])
+            b = np.zeros((num_envs, layer_sizes[i+1]))
             self.weights.append(w)
             self.biases.append(b)
     
@@ -125,16 +129,30 @@ class FeedforwardNetwork(NeuralNetwork):
     def output_size(self) -> int:
         return self._output_size
     
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
+    
     def forward(self, inputs: np.ndarray) -> np.ndarray:
-        """Forward pass with ReLU on hidden layers, linear on output."""
+        """
+        Forward pass for all agents.
+        
+        Parameters:
+        -----------
+        inputs : (num_envs, input_size) array
+        
+        Returns:
+        --------
+        output : (num_envs, output_size) array
+        """
         x = inputs
         
         # Hidden layers with ReLU
         for i in range(len(self.weights) - 1):
-            x = np.maximum(0, x @ self.weights[i] + self.biases[i])
+            x = np.maximum(0, np.einsum('bij,bj->bi', self.weights[i], x) + self.biases[i])
         
         # Output layer (linear)
-        x = x @ self.weights[-1] + self.biases[-1]
+        x = np.einsum('bij,bj->bi', self.weights[-1], x) + self.biases[-1]
         
         return x
     
@@ -143,118 +161,106 @@ class FeedforwardNetwork(NeuralNetwork):
         pass
     
     def get_weights(self) -> np.ndarray:
-        """Flatten all weights and biases into a single array."""
+        """Get flat array of all trainable weights for a single agent (for compatibility)."""
         all_weights = []
         for w, b in zip(self.weights, self.biases):
-            all_weights.append(w.flatten())
-            all_weights.append(b.flatten())
+            all_weights.append(w[0].flatten())
+            all_weights.append(b[0].flatten())
         return np.concatenate(all_weights)
     
     def set_weights(self, weights: np.ndarray):
-        """Set weights from a flat array."""
+        """Set weights from flat array for a single agent (for compatibility)."""
         idx = 0
         for i, (w, b) in enumerate(zip(self.weights, self.biases)):
-            w_size = w.size
-            b_size = b.size
+            w_size = w.shape[1] * w.shape[2]
+            b_size = b.shape[1]
             
-            self.weights[i] = weights[idx:idx + w_size].reshape(w.shape)
+            # Set all agents to the same weights
+            w_flat = weights[idx:idx + w_size]
+            self.weights[i] = w_flat.reshape(1, w.shape[1], w.shape[2]).repeat(self.num_envs, axis=0)
             idx += w_size
             
-            self.biases[i] = weights[idx:idx + b_size]
+            b_flat = weights[idx:idx + b_size]
+            self.biases[i] = b_flat.reshape(1, b.shape[1]).repeat(self.num_envs, axis=0)
             idx += b_size
+    
+    def get_genomes(self) -> list:
+        """Get list of flat weight arrays for all agents."""
+        genomes = []
+        for agent_idx in range(self.num_envs):
+            all_weights = []
+            for w, b in zip(self.weights, self.biases):
+                all_weights.append(w[agent_idx].flatten())
+                all_weights.append(b[agent_idx].flatten())
+            genomes.append(np.concatenate(all_weights))
+        return genomes
+    
+    def set_genomes(self, genomes: list):
+        """Set weights from list of flat arrays."""
+        for agent_idx, genome in enumerate(genomes):
+            idx = 0
+            for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+                w_size = w.shape[1] * w.shape[2]
+                b_size = b.shape[1]
+                
+                self.weights[i][agent_idx] = genome[idx:idx + w_size].reshape(w.shape[1], w.shape[2])
+                idx += w_size
+                
+                self.biases[i][agent_idx] = genome[idx:idx + b_size]
+                idx += b_size
 
 
 # ---------------------------------------------------------------------------
-# Leaky Integrate-and-Fire Spiking Neural Network
+# Vectorized LIF Layer
 # ---------------------------------------------------------------------------
 
-class LIFNeuronLayer:
-    """
-    A layer of Leaky Integrate-and-Fire (LIF) neurons.
-
-    Each neuron maintains a membrane potential V.  On every call to
-    `forward()` the potential is updated according to:
-
-        V[t] = leak * V[t-1] + W @ x[t] + b
-
-    A neuron fires (output = 1) when V >= threshold, after which its
-    potential is reset to `reset_potential`.
-
-    Parameters
-    ----------
-    n_in  : number of pre-synaptic inputs
-    n_out : number of neurons in this layer
-    leak  : membrane leak factor  (0 < leak < 1); default 0.9
-    threshold : firing threshold; default 1.0
-    reset_potential : post-spike reset value; default 0.0
-    """
-
-    def __init__(self, n_in: int, n_out: int,
-                 leak: float = 0.9,
-                 threshold: float = 1.0,
-                 reset_potential: float = 0.0):
+class VectorLIFLayer:
+    def __init__(self, num_envs, n_in, n_out, leak=0.9, threshold=1.0):
+        self.num_envs = num_envs
         self.n_in = n_in
         self.n_out = n_out
         self.leak = leak
         self.threshold = threshold
-        self.reset_potential = reset_potential
-
-        # Synaptic weight matrix  (n_in x n_out) and bias (n_out,)
-        self.W = np.random.randn(n_in, n_out) * np.sqrt(2.0 / n_in)
-        self.b = np.zeros(n_out)
-
-        # Runtime state (reset between episodes)
-        self.V = np.zeros(n_out)   # membrane potential
-
-    # ------------------------------------------------------------------
-    # Forward pass
-    # ------------------------------------------------------------------
-
-    def forward(self, x: np.ndarray) -> np.ndarray:
-        """
-        Process one time-step of input spikes / rates.
-
-        Parameters
-        ----------
-        x : (n_in,) array – input activations (spikes or rates)
-
-        Returns
-        -------
-        spikes : (n_out,) binary array  (1 = fired, 0 = silent)
-        """
-        # Leak + integrate
-        self.V = self.leak * self.V + x @ self.W + self.b
-
-        # Fire
-        spikes = (self.V >= self.threshold).astype(np.float32)
-
-        # Reset fired neurons
-        self.V = np.where(spikes == 1.0, self.reset_potential, self.V)
-
-        return spikes
+        
+        # Unique weights for every robot: (num_envs, n_in, n_out)
+        limit = np.sqrt(2.0 / n_in)
+        self.W = np.random.randn(num_envs, n_in, n_out) * limit
+        self.b = np.zeros((num_envs, n_out))
+        self.V = np.zeros((num_envs, n_out))
 
     def reset_state(self):
-        """Reset membrane potentials to zero (call between episodes)."""
-        self.V[:] = 0.0
+        self.V.fill(0.0)
 
-    # ------------------------------------------------------------------
-    # Genome helpers (flat weight vector for the GA)
-    # ------------------------------------------------------------------
+    def forward(self, x):
+        # x shape: (num_envs, n_in)
+        # Vectorized batch matrix multiplication for unique weights per env
+        z = np.einsum('bi,bij->bj', x, self.W) + self.b
+        self.V = self.leak * self.V + z
+        
+        spikes = (self.V >= self.threshold).astype(np.float32)
+        self.V[spikes == 1.0] = 0.0  # Reset fired neurons
+        return spikes
 
-    def get_weights(self) -> np.ndarray:
-        return np.concatenate([self.W.flatten(), self.b])
+    def get_weights(self):
+        # Returns a list of flat arrays for the GA
+        return [np.concatenate([self.W[i].flatten(), self.b[i]]) for i in range(self.num_envs)]
 
-    def set_weights(self, weights: np.ndarray):
-        size_W = self.n_in * self.n_out
-        self.W = weights[:size_W].reshape(self.n_in, self.n_out)
-        self.b = weights[size_W:]
+    def set_weights(self, flat_weights_list):
+        for i, weights in enumerate(flat_weights_list):
+            size_W = self.n_in * self.n_out
+            self.W[i] = weights[:size_W].reshape(self.n_in, self.n_out)
+            self.b[i] = weights[size_W:]
 
-class SpikingNeuralNetwork(NeuralNetwork):
+
+# ---------------------------------------------------------------------------
+# Vectorized Spiking Neural Network
+# ---------------------------------------------------------------------------
+
+class VectorSpikingNetwork(NeuralNetwork):
     """
-    Two-layer Leaky Integrate-and-Fire Spiking Neural Network.
-
-    Architecture
-    ------------
+    Two-layer vectorized Leaky Integrate-and-Fire Spiking Neural Network.
+    
+    Architecture:
     Input  (n_in  neurons, rate-coded)
       ↓  LIF hidden layer
     Hidden (hidden_size neurons, binary spikes)
@@ -264,24 +270,16 @@ class SpikingNeuralNetwork(NeuralNetwork):
     The network is run for `n_steps` internal time-steps per call so that
     spiking dynamics can accumulate meaningful activity from a single
     observation vector.
-
-    Parameters
-    ----------
-    input_size  : dimensionality of the observation vector
-    hidden_size : number of hidden LIF neurons
-    output_size : number of action neurons
-    n_steps     : internal simulation steps per observation (default 5)
-    leak        : membrane leak for all layers (default 0.9)
-    threshold   : firing threshold for all layers (default 1.0)
     """
-
-    def __init__(self, input_size=100, hidden_size=64, output_size=4, n_steps=5):
+    
+    def __init__(self, num_envs, input_size=100, hidden_size=64, output_size=4, n_steps=5):
+        self._num_envs = num_envs
         self._input_size = input_size
         self.hidden_size = hidden_size
         self._output_size = output_size
         self.n_steps = n_steps
-        self.hidden_layer = LIFNeuronLayer(input_size, hidden_size)
-        self.output_layer = LIFNeuronLayer(hidden_size, output_size)
+        self.hidden_layer = VectorLIFLayer(num_envs, input_size, hidden_size)
+        self.output_layer = VectorLIFLayer(num_envs, hidden_size, output_size)
     
     @property
     def input_size(self) -> int:
@@ -290,36 +288,33 @@ class SpikingNeuralNetwork(NeuralNetwork):
     @property
     def output_size(self) -> int:
         return self._output_size
-    # ------------------------------------------------------------------
-    # Inference
-    # ------------------------------------------------------------------
+    
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
 
-    def forward(self, inputs: np.ndarray) -> np.ndarray:
+    def forward(self, obs):
         """
         Run the SNN for `n_steps` time-steps and return accumulated output
         spike counts (one value per action neuron).
 
         Parameters
         ----------
-        inputs : (input_size,) float array, values in [0, 1]
-                 Treated as a constant Poisson rate stimulus.
+        obs : (num_envs, input_size) float array, values in [0, 1]
+              Treated as a constant Poisson rate stimulus.
 
         Returns
         -------
-        spike_counts : (output_size,) float array
+        spike_counts : (num_envs, output_size) float array
                        Larger value → neuron fired more → preferred action.
         """
-        # Encode continuous input as Bernoulli spikes each time-step
-        spike_counts = np.zeros(self.output_size)
-
+        spike_counts = np.zeros((self.num_envs, self.output_layer.n_out))
         for _ in range(self.n_steps):
             # Poisson / rate encoding: spike with probability = input value
-            encoded = (np.random.rand(self.input_size) < inputs).astype(np.float32)
-
+            encoded = (np.random.rand(*obs.shape) < obs).astype(np.float32)
             h_spikes = self.hidden_layer.forward(encoded)
             o_spikes = self.output_layer.forward(h_spikes)
             spike_counts += o_spikes
-
         return spike_counts
 
     def reset_state(self):
@@ -327,34 +322,52 @@ class SpikingNeuralNetwork(NeuralNetwork):
         self.hidden_layer.reset_state()
         self.output_layer.reset_state()
 
-    # ------------------------------------------------------------------
-    # Genome helpers
-    # ------------------------------------------------------------------
-
     def get_weights(self) -> np.ndarray:
-        return np.concatenate([
-            self.hidden_layer.get_weights(),
-            self.output_layer.get_weights()
-        ])
-
+        """Get flat array of all trainable weights for a single agent (for compatibility)."""
+        # This returns weights for agent 0 - needed for NeuralNetwork interface
+        h_w = self.hidden_layer.get_weights()[0]
+        o_w = self.output_layer.get_weights()[0]
+        return np.concatenate([h_w, o_w])
+    
     def set_weights(self, weights: np.ndarray):
-        n_h = (self.input_size * self.hidden_size) + self.hidden_size
-        self.hidden_layer.set_weights(weights[:n_h])
-        self.output_layer.set_weights(weights[n_h:])
+        """Set weights from flat array for a single agent (for compatibility)."""
+        # This sets all agents to the same weights
+        h_size = (self.hidden_layer.n_in * self.hidden_layer.n_out) + self.hidden_layer.n_out
+        h_weights = weights[:h_size]
+        o_weights = weights[h_size:]
+        
+        # Set all agents to the same weights
+        self.hidden_layer.set_weights([h_weights] * self.num_envs)
+        self.output_layer.set_weights([o_weights] * self.num_envs)
+    
+    def get_genomes(self):
+        h_w = self.hidden_layer.get_weights()
+        o_w = self.output_layer.get_weights()
+        return [np.concatenate([h, o]) for h, o in zip(h_w, o_w)]
+
+    def set_genomes(self, genomes):
+        h_size = (self.hidden_layer.n_in * self.hidden_layer.n_out) + self.hidden_layer.n_out
+        h_weights = [g[:h_size] for g in genomes]
+        o_weights = [g[h_size:] for g in genomes]
+        self.hidden_layer.set_weights(h_weights)
+        self.output_layer.set_weights(o_weights)
 
 
 # ---------------------------------------------------------------------------
 # Network Factory
 # ---------------------------------------------------------------------------
 
-def create_neural_network(network_type: str, input_size: int, output_size: int, **kwargs) -> NeuralNetwork:
+def create_vector_neural_network(network_type: str, num_envs: int, input_size: int, 
+                                  output_size: int, **kwargs) -> NeuralNetwork:
     """
-    Factory function to create different types of neural networks.
+    Factory function to create different types of vectorized neural networks.
     
     Parameters:
     -----------
     network_type : str
         Type of network to create. Options: "spiking", "feedforward"
+    num_envs : int
+        Number of parallel agents
     input_size : int
         Input dimension
     output_size : int
@@ -370,23 +383,23 @@ def create_neural_network(network_type: str, input_size: int, output_size: int, 
     if network_type == "spiking":
         hidden_size = kwargs.get("hidden_size", 64)
         n_steps = kwargs.get("n_steps", 5)
-        return SpikingNeuralNetwork(input_size, hidden_size, output_size, n_steps)
+        return VectorSpikingNetwork(num_envs, input_size, hidden_size, output_size, n_steps)
     
     elif network_type == "feedforward":
         hidden_sizes = kwargs.get("hidden_sizes", [64])
-        return FeedforwardNetwork(input_size, hidden_sizes, output_size)
+        return VectorFeedforwardNetwork(num_envs, input_size, hidden_sizes, output_size)
     
     else:
         raise ValueError(f"Unknown network type: {network_type}. Choose from 'spiking' or 'feedforward'")
 
 
 # ---------------------------------------------------------------------------
-# Neuroevolution Strategy with Extinction Logic
+# Neuroevolution Strategy with Extinction Logic (Vectorized)
 # ---------------------------------------------------------------------------
 
-class NaturalSelectionNeuralNet(BaseStrategy):
+class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
-                 mutation_rate=0.2, mutation_mag=0.5, weights_dir="spike_weights",
+                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
                  network_type="spiking", **network_params):
         """
         Parameters:
@@ -401,8 +414,8 @@ class NaturalSelectionNeuralNet(BaseStrategy):
             Probability of mutating each weight
         mutation_mag : float
             Standard deviation of Gaussian mutation noise
-        weights_dir : str
-            Directory to save weights
+        max_samples_per_gen : int
+            Maximum number of successful individuals to save per generation
         network_type : str
             Type of neural network to use ("spiking" or "feedforward")
         **network_params : additional parameters passed to network factory
@@ -410,171 +423,225 @@ class NaturalSelectionNeuralNet(BaseStrategy):
             For feedforward: hidden_sizes
         """
         params = {
-            "population_size": population_size,
+            "pop_size": population_size,
             "generations": generations,
             "num_trials": num_trials,
             "mutation_rate": mutation_rate,
             "mutation_mag": mutation_mag,
-            "weights_dir": weights_dir,
+            "max_samples_per_gen": max_samples_per_gen,
             "network_type": network_type,
             "network_params": network_params
         }
-        super().__init__("spike_nn", params)
+        super().__init__("vec_spike_nn", params)
         self.pop_size = population_size
         self.max_gens = generations
         self.num_trials = num_trials
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
-        self.weights_dir = weights_dir
+        self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params
-        os.makedirs(self.weights_dir, exist_ok=True)
 
     def run(self, env):
-        import time
+        """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
         from tqdm import tqdm
+        import time
         
-        results_file = os.path.join(env.output_dir, "trial_metrics.csv")
-        headers = ["Run", "Generation", "% Success", "Avg Path Length", 
-                   "Avg Energy Rem", "Avg Health Rem", "Avg Dist to Reward", 
-                   "Gen Total Steps", "Gen Time (s)", "ms/Step", "Weights Directory",
-                   "Network Type"]
-        
-        with open(results_file, 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(headers)
-
-            for trial in range(1, self.num_trials + 1):
-                # Outer progress bar for Generations
-                gen_pbar = tqdm(range(1, self.max_gens + 1), 
-                                desc=f"Trial {trial}/{self.num_trials}", 
-                                unit="gen", position=0)
+        for trial in range(1, self.num_trials + 1):
+            # Create trial directory
+            trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
+            os.makedirs(trial_dir, exist_ok=True)
+            
+            # Create population using factory
+            pop_brain = create_vector_neural_network(
+                self.network_type,
+                self.pop_size,
+                env.num_rays,
+                4,  # 4 actions
+                **self.network_params
+            )
+            
+            # 1. Trial-level progress bar
+            gen_pbar = tqdm(range(1, self.max_gens + 1), 
+                            desc=f"Trial {trial}/{self.num_trials}", 
+                            unit="gen", position=0)
+            
+            for gen in gen_pbar:
+                # Create generation directory
+                gen_dir = os.path.join(trial_dir, f"gen_{gen}")
+                os.makedirs(gen_dir, exist_ok=True)
                 
-                # Create initial population
-                population = []
-                for _ in range(self.pop_size):
-                    net = create_neural_network(
-                        self.network_type, 
-                        env.num_rays, 
-                        4,  # 4 actions
-                        **self.network_params
-                    )
-                    population.append(net)
+                # Create samples directory
+                samples_dir = os.path.join(gen_dir, "samples")
+                os.makedirs(samples_dir, exist_ok=True)
                 
-                for gen in gen_pbar:
-                    survivors = []
-                    gen_stats = {"path_lengths": [], "energies": [], "healths": [], "dist_to_reward": []}
+                obs = env.reset()
+                
+                # Store initial positions, reward positions, and initial energy/health for each individual
+                initial_poses = [(env.robot_x[i], env.robot_y[i]) for i in range(self.pop_size)]
+                reward_positions = [(env.goal_x[i], env.goal_y[i]) for i in range(self.pop_size)]
+                
+                # Calculate initial distances to reward for each individual
+                initial_distances = []
+                for i in range(self.pop_size):
+                    dx = initial_poses[i][0] - reward_positions[i][0]
+                    dy = initial_poses[i][1] - reward_positions[i][1]
+                    initial_distances.append(np.sqrt(dx*dx + dy*dy))
+                
+                pop_brain.reset_state()
+                
+                gen_start_time = time.time()
+                steps = 0
+                
+                # Track progress over steps for this generation
+                goals_reached_by_step = set()
+                
+                # Track which individuals have reached the goal and their success metrics
+                reached_goal = np.zeros(self.pop_size, dtype=bool)
+                success_steps = np.full(self.pop_size, -1, dtype=int)
+                success_energy = np.full(self.pop_size, -1, dtype=float)
+                success_health = np.full(self.pop_size, -1, dtype=float)
+                
+                # CSV log for this generation (step-level data)
+                step_csv_path = os.path.join(gen_dir, "log.csv")
+                with open(step_csv_path, 'w', newline='') as step_f:
+                    step_writer = csv.writer(step_f)
+                    step_writer.writerow(["step", "percent_done", "new_successes"])
                     
-                    # Performance Tracking for this generation
-                    gen_start_time = time.time()
-                    gen_total_steps = 0
-
-                    # Inner progress bar for Individuals
-                    ind_pbar = tqdm(enumerate(population), total=self.pop_size, 
-                                    desc=f"  Gen {gen} Progress", leave=False, 
-                                    unit="ind", position=1)
-
-                    for idx, net in ind_pbar:
-                        obs = env.reset()
-                        net.reset_state()
-                        done = False
+                    while True:
+                        # Parallel inference and step
+                        output = pop_brain.forward(obs / env.ray_length)
+                        actions = np.argmax(output, axis=1)
+                        obs, rewards, dones, info = env.step(actions)
                         
-                        while not done:
-                            normalized_obs = obs / env.ray_length
-                            output = net.forward(normalized_obs)
-                            action = np.argmax(output)
-                            obs, reward, done, info = env.step(action)
-                            
-                            # Increment total steps for the whole generation
-                            gen_total_steps += 1
-                            
-                            if env.render_flag: env.render()
-
-                        if info.get("goal_reached", False):
-                            survivors.append(net)
-                            gen_stats["path_lengths"].append(env.current_step)
-                            gen_stats["energies"].append(info["energy"])
-                            gen_stats["healths"].append(info["health"])
-                            
-                        dx, dy = env.robot_x - env.goal_x, env.robot_y - env.goal_y
-                        dist = np.sqrt(dx*dx + dy*dy)
-                        gen_stats["dist_to_reward"].append(dist)
+                        steps += 1
                         
-                        ind_pbar.set_postfix({"Found": len(survivors), "Dist": f"{dist:.1f}"})
-
-                    # Calculate timing stats
-                    gen_duration = time.time() - gen_start_time
-                    ms_per_step = (gen_duration * 1000) / gen_total_steps if gen_total_steps > 0 else 0
-
-                    success_rate = len(survivors) / self.pop_size
-                    avg_path = np.mean(gen_stats["path_lengths"]) if survivors else 0
-                    avg_dist = np.mean(gen_stats["dist_to_reward"])
-
-                    # Update outer bar with Success Rate and Performance
-                    gen_pbar.set_postfix({
-                        "SR": f"{success_rate*100:.1f}%",
-                        "ms/st": f"{ms_per_step:.2f}",
-                        "Steps": gen_total_steps
-                    })
-
-                    # Save weights and Log Data
-                    gen_dir = os.path.join(self.weights_dir, f"trial_{trial}_gen_{gen}")
-                    os.makedirs(gen_dir, exist_ok=True)
-                    if survivors:
-                        with open(os.path.join(gen_dir, "best_survivor.json"), 'w') as wf:
-                            json.dump({
-                                "network_type": self.network_type,
-                                "network_params": self.network_params,
-                                "weights": survivors[0].get_weights().tolist()
-                            }, wf)
-
-                    row = [trial, gen, f"{success_rate*100:.2f}%", f"{avg_path:.2f}", 
-                           f"{np.mean(gen_stats['energies']) if survivors else 0:.2f}", 
-                           f"{np.mean(gen_stats['healths']) if survivors else 0:.2f}", 
-                           f"{avg_dist:.2f}", gen_total_steps, f"{gen_duration:.2f}", 
-                           f"{ms_per_step:.2f}", gen_dir, self.network_type]
-                    writer.writerow(row)
-                    f.flush()
-
-                    if not survivors:
-                        gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
-                        break
-                    
-                    population = self._reproduce(survivors)
-
-        return 0, 0
+                        # Track newly reached goals
+                        new_successes = info["goal_reached"] & ~reached_goal
+                        new_success_indices = np.where(new_successes)[0]
+                        
+                        for idx in new_success_indices:
+                            goals_reached_by_step.add(idx)
+                            reached_goal[idx] = True
+                            success_steps[idx] = steps
+                            success_energy[idx] = env.energy[idx]
+                            success_health[idx] = env.health[idx]
+                            
+                            # Save sample weights for successful individuals (limited per gen)
+                            if len(os.listdir(samples_dir)) < self.max_samples_per_gen:
+                                sample_path = os.path.join(samples_dir, f"ind_{idx}.json")
+                                genome = pop_brain.get_genomes()[idx]
+                                sample_data = {
+                                    "individual_id": int(idx),
+                                    "generation": gen,
+                                    "trial": trial,
+                                    "weights": genome.tolist(),
+                                    "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
+                                    "initial_distance_to_reward": float(initial_distances[idx]),
+                                    "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
+                                    "steps_to_success": int(success_steps[idx]),
+                                    "energy_remaining": float(success_energy[idx]),
+                                    "health_remaining": float(success_health[idx])
+                                }
+                                with open(sample_path, 'w') as wf:
+                                    json.dump(sample_data, wf, indent=2)
+                        
+                        percent_done = (len(goals_reached_by_step) / self.pop_size) * 100
+                        step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
+                        step_f.flush()
+                        
+                        # Update progress every 10 steps to reduce overhead
+                        if steps % 10 == 0:
+                            gen_pbar.set_postfix({
+                                "Step": steps,
+                                "%Done": f"{percent_done:.1f}%"
+                            })
+                        
+                        if env.render_flag:
+                            env.render()
+                        
+                        if np.all(dones):
+                            break
+                
+                # 2. End-of-Generation reporting
+                gen_duration = time.time() - gen_start_time
+                survivor_indices = np.where(reached_goal)[0]
+                success_rate = (len(survivor_indices) / self.pop_size) * 100
+                
+                # Calculate generation statistics for successful individuals
+                path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
+                energies = [success_energy[idx] for idx in survivor_indices if success_energy[idx] > 0]
+                healths = [success_health[idx] for idx in survivor_indices if success_health[idx] > 0]
+                initial_dists = [initial_distances[idx] for idx in survivor_indices]
+                
+                # Generate log.json for this generation
+                gen_stats = {
+                    "generation": gen,
+                    "trial": trial,
+                    "timestamp": datetime.now().isoformat(),
+                    "success_rate_percent": success_rate,
+                    "num_successful": len(survivor_indices),
+                    "population_size": self.pop_size,
+                    "avg_path_length": float(np.mean(path_lengths)) if path_lengths else 0,
+                    "avg_energy_remaining": float(np.mean(energies)) if energies else 0,
+                    "avg_health_remaining": float(np.mean(healths)) if healths else 0,
+                    "avg_initial_distance_to_reward": float(np.mean(initial_dists)) if initial_dists else 0,
+                    "generation_duration_seconds": gen_duration,
+                    "total_steps_in_gen": steps,
+                    "max_samples_per_gen": self.max_samples_per_gen,
+                    "samples_saved": len(os.listdir(samples_dir))
+                }
+                
+                gen_stats_path = os.path.join(gen_dir, "log.json")
+                with open(gen_stats_path, 'w') as wf:
+                    json.dump(gen_stats, wf, indent=2)
+                
+                gen_pbar.set_postfix({
+                    "Success": f"{success_rate:.1f}%",
+                    "Total_Steps": steps,
+                    "Sec/Gen": f"{gen_duration:.1f}s"
+                })
+                
+                # Also maintain a trial-level summary CSV
+                trial_summary_path = os.path.join(trial_dir, "summary.csv")
+                file_exists = os.path.exists(trial_summary_path)
+                with open(trial_summary_path, 'a', newline='') as sf:
+                    writer = csv.writer(sf)
+                    if not file_exists:
+                        writer.writerow(["generation", "success_rate_percent", "num_successful", 
+                                        "avg_path_length", "avg_energy_remaining", 
+                                        "avg_health_remaining", "avg_initial_distance_to_reward",
+                                        "gen_duration_seconds", "total_steps_in_gen"])
+                    writer.writerow([
+                        gen, f"{success_rate:.2f}%", len(survivor_indices),
+                        f"{np.mean(path_lengths) if path_lengths else 0:.2f}",
+                        f"{np.mean(energies) if energies else 0:.2f}",
+                        f"{np.mean(healths) if healths else 0:.2f}",
+                        f"{np.mean(initial_dists) if initial_dists else 0:.2f}",
+                        f"{gen_duration:.2f}", steps
+                    ])
+                
+                if len(survivor_indices) == 0:
+                    gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
+                    break
+                
+                new_genomes = self._reproduce(pop_brain.get_genomes(), survivor_indices)
+                pop_brain.set_genomes(new_genomes)
     
-    def _reproduce(self, survivors):
-        new_population = []
-        # Keep survivors (Elitism) 
-        new_population.extend(survivors[:max(1, self.pop_size // 10)])
-        
-        while len(new_population) < self.pop_size:
-            parent = random.choice(survivors)
-            child_weights = parent.get_weights().copy()
+    def _reproduce(self, all_genomes, survivor_indices):
+        new_genomes = []
+        # Elitism: Keep best survivors
+        n_elites = max(1, self.pop_size // 10)
+        for i in range(min(n_elites, len(survivor_indices))):
+            new_genomes.append(all_genomes[survivor_indices[i]])
             
-            # Mutation: Gaussian noise 
-            mask = np.random.random(len(child_weights)) < self.mutation_rate
-            child_weights[mask] += np.random.randn(np.sum(mask)) * self.mutation_mag
+        # Mutation: Fill remaining population
+        while len(new_genomes) < self.pop_size:
+            parent_idx = np.random.choice(survivor_indices)
+            child_genome = all_genomes[parent_idx].copy()
             
-            # Create child with same architecture as parent
-            if isinstance(parent, SpikingNeuralNetwork):
-                child = SpikingNeuralNetwork(
-                    input_size=parent.input_size,
-                    hidden_size=parent.hidden_size,
-                    output_size=parent.output_size,
-                    n_steps=parent.n_steps
-                )
-            elif isinstance(parent, FeedforwardNetwork):
-                child = FeedforwardNetwork(
-                    input_size=parent.input_size,
-                    hidden_sizes=parent.hidden_sizes,
-                    output_size=parent.output_size
-                )
-            else:
-                raise TypeError(f"Unknown network type: {type(parent)}")
+            mask = np.random.random(len(child_genome)) < self.mutation_rate
+            child_genome[mask] += np.random.randn(np.sum(mask)) * self.mutation_mag
+            new_genomes.append(child_genome)
             
-            child.set_weights(child_weights)
-            new_population.append(child)
-            
-        return new_population
+        return new_genomes
