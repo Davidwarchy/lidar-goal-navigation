@@ -1,9 +1,218 @@
-from .base_strategy import BaseStrategy
+"""
+Vectorized Neural Networks with Genetic Algorithm (Neuroevolution)
+
+This strategy implements a population-based neuroevolution system where
+multiple neural network agents compete in each generation. The best performing
+agents are selected for reproduction through natural selection.
+
+Key Features:
+- Population of neural networks (not just one)
+- Genetic algorithm: selection, crossover, mutation
+- Energy system: each step costs 1 energy point
+- Pluggable neural network architecture (SNN or Feedforward)
+
+Supported Network Types:
+- "spiking": Leaky Integrate-and-Fire Spiking Neural Network
+- "feedforward": Standard multi-layer perceptron
+
+Fitness Metrics Tracked:
+- Generation: Current iteration number
+- % of Generation Successful: Percentage of agents that survived (reached goal)
+- Average Success Path Length: Average steps taken by successful agents
+- Average Success Energy Remaining: Average energy left for successful agents
+- Average Success Health: Same as energy remaining
+- Average Distance to Reward: Average distance traveled
+- Weights Directory: Location where weights are saved
+"""
+
 import numpy as np
 import os
 import json
 import csv
+import random
 from datetime import datetime
+from .base_strategy import BaseStrategy
+from abc import ABC, abstractmethod
+
+
+# ---------------------------------------------------------------------------
+# Abstract Neural Network Interface
+# ---------------------------------------------------------------------------
+
+class NeuralNetwork(ABC):
+    """Abstract base class for neural networks used in neuroevolution."""
+    
+    @abstractmethod
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        """Process inputs and return output activations."""
+        pass
+    
+    @abstractmethod
+    def reset_state(self):
+        """Reset any internal state (e.g., for RNNs/SNNs)."""
+        pass
+    
+    @abstractmethod
+    def get_weights(self) -> np.ndarray:
+        """Get flat array of all trainable weights."""
+        pass
+    
+    @abstractmethod
+    def set_weights(self, weights: np.ndarray):
+        """Set weights from flat array."""
+        pass
+    
+    @property
+    @abstractmethod
+    def input_size(self) -> int:
+        """Return input dimension."""
+        pass
+    
+    @property
+    @abstractmethod
+    def output_size(self) -> int:
+        """Return output dimension."""
+        pass
+
+
+# ---------------------------------------------------------------------------
+# Vectorized Feedforward Neural Network
+# ---------------------------------------------------------------------------
+
+class VectorFeedforwardNetwork(NeuralNetwork):
+    """
+    Vectorized standard multi-layer perceptron with ReLU activations.
+    
+    Architecture:
+    Input -> Hidden Layer(s) (ReLU) -> Output Layer (Linear)
+    
+    All agents are evaluated in parallel using vectorized operations.
+    """
+    
+    def __init__(self, num_envs: int, input_size: int, hidden_sizes: list, output_size: int):
+        """
+        Parameters:
+        -----------
+        num_envs : int
+            Number of parallel agents
+        input_size : int
+            Dimensionality of input observations
+        hidden_sizes : list of int
+            Number of neurons in each hidden layer (e.g., [64, 32])
+        output_size : int
+            Number of output neurons (actions)
+        """
+        self._num_envs = num_envs
+        self._input_size = input_size
+        self._output_size = output_size
+        self.hidden_sizes = hidden_sizes
+        
+        # Build layer sizes
+        layer_sizes = [input_size] + hidden_sizes + [output_size]
+        
+        # Initialize weights and biases for all agents
+        self.weights = []
+        self.biases = []
+        
+        for i in range(len(layer_sizes) - 1):
+            # He initialization for ReLU
+            w = np.random.randn(num_envs, layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2.0 / layer_sizes[i])
+            b = np.zeros((num_envs, layer_sizes[i+1]))
+            self.weights.append(w)
+            self.biases.append(b)
+    
+    @property
+    def input_size(self) -> int:
+        return self._input_size
+    
+    @property
+    def output_size(self) -> int:
+        return self._output_size
+    
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
+    
+    def forward(self, inputs: np.ndarray) -> np.ndarray:
+        """
+        Forward pass for all agents.
+        
+        Parameters:
+        -----------
+        inputs : (num_envs, input_size) array
+        
+        Returns:
+        --------
+        output : (num_envs, output_size) array
+        """
+        x = inputs
+        
+        # Hidden layers with ReLU
+        for i in range(len(self.weights) - 1):
+            x = np.maximum(0, np.einsum('bij,bj->bi', self.weights[i], x) + self.biases[i])
+        
+        # Output layer (linear)
+        x = np.einsum('bij,bj->bi', self.weights[-1], x) + self.biases[-1]
+        
+        return x
+    
+    def reset_state(self):
+        """Feedforward networks have no state to reset."""
+        pass
+    
+    def get_weights(self) -> np.ndarray:
+        """Get flat array of all trainable weights for a single agent (for compatibility)."""
+        all_weights = []
+        for w, b in zip(self.weights, self.biases):
+            all_weights.append(w[0].flatten())
+            all_weights.append(b[0].flatten())
+        return np.concatenate(all_weights)
+    
+    def set_weights(self, weights: np.ndarray):
+        """Set weights from flat array for a single agent (for compatibility)."""
+        idx = 0
+        for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+            w_size = w.shape[1] * w.shape[2]
+            b_size = b.shape[1]
+            
+            # Set all agents to the same weights
+            w_flat = weights[idx:idx + w_size]
+            self.weights[i] = w_flat.reshape(1, w.shape[1], w.shape[2]).repeat(self.num_envs, axis=0)
+            idx += w_size
+            
+            b_flat = weights[idx:idx + b_size]
+            self.biases[i] = b_flat.reshape(1, b.shape[1]).repeat(self.num_envs, axis=0)
+            idx += b_size
+    
+    def get_genomes(self) -> list:
+        """Get list of flat weight arrays for all agents."""
+        genomes = []
+        for agent_idx in range(self.num_envs):
+            all_weights = []
+            for w, b in zip(self.weights, self.biases):
+                all_weights.append(w[agent_idx].flatten())
+                all_weights.append(b[agent_idx].flatten())
+            genomes.append(np.concatenate(all_weights))
+        return genomes
+    
+    def set_genomes(self, genomes: list):
+        """Set weights from list of flat arrays."""
+        for agent_idx, genome in enumerate(genomes):
+            idx = 0
+            for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+                w_size = w.shape[1] * w.shape[2]
+                b_size = b.shape[1]
+                
+                self.weights[i][agent_idx] = genome[idx:idx + w_size].reshape(w.shape[1], w.shape[2])
+                idx += w_size
+                
+                self.biases[i][agent_idx] = genome[idx:idx + b_size]
+                idx += b_size
+
+
+# ---------------------------------------------------------------------------
+# Vectorized LIF Layer
+# ---------------------------------------------------------------------------
 
 class VectorLIFLayer:
     def __init__(self, num_envs, n_in, n_out, leak=0.9, threshold=1.0):
@@ -42,16 +251,66 @@ class VectorLIFLayer:
             self.W[i] = weights[:size_W].reshape(self.n_in, self.n_out)
             self.b[i] = weights[size_W:]
 
-class VectorSNN:
+
+# ---------------------------------------------------------------------------
+# Vectorized Spiking Neural Network
+# ---------------------------------------------------------------------------
+
+class VectorSpikingNetwork(NeuralNetwork):
+    """
+    Two-layer vectorized Leaky Integrate-and-Fire Spiking Neural Network.
+    
+    Architecture:
+    Input  (n_in  neurons, rate-coded)
+      ↓  LIF hidden layer
+    Hidden (hidden_size neurons, binary spikes)
+      ↓  LIF output layer
+    Output (n_out neurons, binary spikes → argmax action)
+
+    The network is run for `n_steps` internal time-steps per call so that
+    spiking dynamics can accumulate meaningful activity from a single
+    observation vector.
+    """
+    
     def __init__(self, num_envs, input_size=100, hidden_size=64, output_size=4, n_steps=5):
-        self.num_envs = num_envs
+        self._num_envs = num_envs
+        self._input_size = input_size
+        self.hidden_size = hidden_size
+        self._output_size = output_size
         self.n_steps = n_steps
         self.hidden_layer = VectorLIFLayer(num_envs, input_size, hidden_size)
         self.output_layer = VectorLIFLayer(num_envs, hidden_size, output_size)
+    
+    @property
+    def input_size(self) -> int:
+        return self._input_size
+    
+    @property
+    def output_size(self) -> int:
+        return self._output_size
+    
+    @property
+    def num_envs(self) -> int:
+        return self._num_envs
 
     def forward(self, obs):
+        """
+        Run the SNN for `n_steps` time-steps and return accumulated output
+        spike counts (one value per action neuron).
+
+        Parameters
+        ----------
+        obs : (num_envs, input_size) float array, values in [0, 1]
+              Treated as a constant Poisson rate stimulus.
+
+        Returns
+        -------
+        spike_counts : (num_envs, output_size) float array
+                       Larger value → neuron fired more → preferred action.
+        """
         spike_counts = np.zeros((self.num_envs, self.output_layer.n_out))
         for _ in range(self.n_steps):
+            # Poisson / rate encoding: spike with probability = input value
             encoded = (np.random.rand(*obs.shape) < obs).astype(np.float32)
             h_spikes = self.hidden_layer.forward(encoded)
             o_spikes = self.output_layer.forward(h_spikes)
@@ -59,9 +318,28 @@ class VectorSNN:
         return spike_counts
 
     def reset_state(self):
+        """Reset all neuron membrane potentials (call between episodes)."""
         self.hidden_layer.reset_state()
         self.output_layer.reset_state()
 
+    def get_weights(self) -> np.ndarray:
+        """Get flat array of all trainable weights for a single agent (for compatibility)."""
+        # This returns weights for agent 0 - needed for NeuralNetwork interface
+        h_w = self.hidden_layer.get_weights()[0]
+        o_w = self.output_layer.get_weights()[0]
+        return np.concatenate([h_w, o_w])
+    
+    def set_weights(self, weights: np.ndarray):
+        """Set weights from flat array for a single agent (for compatibility)."""
+        # This sets all agents to the same weights
+        h_size = (self.hidden_layer.n_in * self.hidden_layer.n_out) + self.hidden_layer.n_out
+        h_weights = weights[:h_size]
+        o_weights = weights[h_size:]
+        
+        # Set all agents to the same weights
+        self.hidden_layer.set_weights([h_weights] * self.num_envs)
+        self.output_layer.set_weights([o_weights] * self.num_envs)
+    
     def get_genomes(self):
         h_w = self.hidden_layer.get_weights()
         o_w = self.output_layer.get_weights()
@@ -75,23 +353,94 @@ class VectorSNN:
         self.output_layer.set_weights(o_weights)
 
 
-class VectorSpikeNNStrategy(BaseStrategy):
+# ---------------------------------------------------------------------------
+# Network Factory
+# ---------------------------------------------------------------------------
+
+def create_vector_neural_network(network_type: str, num_envs: int, input_size: int, 
+                                  output_size: int, **kwargs) -> NeuralNetwork:
+    """
+    Factory function to create different types of vectorized neural networks.
+    
+    Parameters:
+    -----------
+    network_type : str
+        Type of network to create. Options: "spiking", "feedforward"
+    num_envs : int
+        Number of parallel agents
+    input_size : int
+        Input dimension
+    output_size : int
+        Output dimension
+    **kwargs : additional parameters
+        For spiking: hidden_size (default 64), n_steps (default 5)
+        For feedforward: hidden_sizes (default [64])
+    
+    Returns:
+    --------
+    NeuralNetwork instance
+    """
+    if network_type == "spiking":
+        hidden_size = kwargs.get("hidden_size", 64)
+        n_steps = kwargs.get("n_steps", 5)
+        return VectorSpikingNetwork(num_envs, input_size, hidden_size, output_size, n_steps)
+    
+    elif network_type == "feedforward":
+        hidden_sizes = kwargs.get("hidden_sizes", [64])
+        return VectorFeedforwardNetwork(num_envs, input_size, hidden_sizes, output_size)
+    
+    else:
+        raise ValueError(f"Unknown network type: {network_type}. Choose from 'spiking' or 'feedforward'")
+
+
+# ---------------------------------------------------------------------------
+# Neuroevolution Strategy with Extinction Logic (Vectorized)
+# ---------------------------------------------------------------------------
+
+class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
-                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10):
-        super().__init__("vec_spike_nn", {
+                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
+                 network_type="spiking", **network_params):
+        """
+        Parameters:
+        -----------
+        population_size : int
+            Number of agents per generation
+        generations : int
+            Maximum number of generations
+        num_trials : int
+            Number of independent trials to run
+        mutation_rate : float
+            Probability of mutating each weight
+        mutation_mag : float
+            Standard deviation of Gaussian mutation noise
+        max_samples_per_gen : int
+            Maximum number of successful individuals to save per generation
+        network_type : str
+            Type of neural network to use ("spiking" or "feedforward")
+        **network_params : additional parameters passed to network factory
+            For spiking: hidden_size, n_steps
+            For feedforward: hidden_sizes
+        """
+        params = {
             "pop_size": population_size,
             "generations": generations,
             "num_trials": num_trials,
             "mutation_rate": mutation_rate,
             "mutation_mag": mutation_mag,
-            "max_samples_per_gen": max_samples_per_gen
-        })
+            "max_samples_per_gen": max_samples_per_gen,
+            "network_type": network_type,
+            "network_params": network_params
+        }
+        super().__init__("vec_spike_nn", params)
         self.pop_size = population_size
         self.max_gens = generations
         self.num_trials = num_trials
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
         self.max_samples_per_gen = max_samples_per_gen
+        self.network_type = network_type
+        self.network_params = network_params
 
     def run(self, env):
         """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
@@ -103,7 +452,14 @@ class VectorSpikeNNStrategy(BaseStrategy):
             trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
             os.makedirs(trial_dir, exist_ok=True)
             
-            pop_brain = VectorSNN(num_envs=self.pop_size, input_size=env.num_rays)
+            # Create population using factory
+            pop_brain = create_vector_neural_network(
+                self.network_type,
+                self.pop_size,
+                env.num_rays,
+                4,  # 4 actions
+                **self.network_params
+            )
             
             # 1. Trial-level progress bar
             gen_pbar = tqdm(range(1, self.max_gens + 1), 

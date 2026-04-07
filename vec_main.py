@@ -37,45 +37,40 @@ def load_strategy(name,
     if name == "manual":
         from strategies.manual_control import ManualControlStrategy
         return ManualControlStrategy()
+    
     if name == "uniform":
         from strategies.uniform import UniformRunLengthStrategy
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
-    if name == "spike_nn":
-        from strategies.nn import NaturalSelectionNeuralNet
-        return NaturalSelectionNeuralNet(
+    if name == "spiking":
+        from strategies.vector_snn import NNStrategy
+        return NNStrategy(
             population_size=population_size,
             generations=num_generations,
             num_trials=num_trials,
-            mutation_rate=0.3,
-            weights_dir="spike_weights"
-        )
-    if name == "ga":
-        from strategies.nn import RNNGeneticStrategy
-        return RNNGeneticStrategy(
-            num_trials=num_trials,
-            generations=num_generations,
-            population_size=population_size, 
             mutation_rate=mutation_rate,
-            load_weights=load_weights,
-            weights_dir=weights_dir
+            mutation_mag=0.5,
+            network_type="spiking"
         )
     
-    if name == "snn":
-        from strategies.vector_snn import VectorSpikeNNStrategy
-        return VectorSpikeNNStrategy(
+    if name == "random_nn":
+        from strategies.vector_snn import NNStrategy
+        return NNStrategy(
             population_size=population_size,
             generations=num_generations,
             num_trials=num_trials,
-            mutation_rate=0.2,
-            mutation_mag=0.5
+            mutation_rate=mutation_rate,
+            mutation_mag=0.5,
+            network_type="feedforward"
         )
 
     raise ValueError(f"Unknown strategy: {name}")
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Vectorized Robot Exploration")
-    parser.add_argument("--strategy", type=str, default="random", choices=["random", "ga", "spike_nn", "snn"])
+    parser.add_argument("--strategy", type=str, default="random", 
+                        choices=["random", "spiking", "random_nn"],
+                        help="Exploration strategy")
     parser.add_argument("--max_steps", type=int, default=1000)
     parser.add_argument("--num_envs", type=int, default=10, help="Number of parallel robots")
     parser.add_argument("--render", action="store_true")
@@ -113,7 +108,8 @@ def main():
         args.strategy,
         population_size=args.population,
         num_generations=args.generations,
-        num_trials=args.trials
+        num_trials=args.trials,
+        mutation_rate=args.mutation_rate
     )
 
     # Initialize Environment with correct num_envs
