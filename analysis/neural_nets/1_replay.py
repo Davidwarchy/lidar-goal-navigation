@@ -8,7 +8,7 @@ import os
 import json
 import numpy as np
 from env import RobotExplorationEnv
-from strategies.genetic_algorithm import NeuralNetwork
+from strategies.nn_random import NeuralNetwork
 
 def run_trained_robot(map_path, weight_file_path, render=True, max_steps=1000):
     """

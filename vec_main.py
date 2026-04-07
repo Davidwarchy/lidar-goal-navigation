@@ -42,7 +42,7 @@ def load_strategy(name,
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
     if name == "spike_nn":
-        from strategies.spiking import SpikeNNGeneticStrategy
+        from strategies.nn_spiking import SpikeNNGeneticStrategy
         return SpikeNNGeneticStrategy(
             population_size=population_size,
             generations=num_generations,
@@ -51,7 +51,7 @@ def load_strategy(name,
             weights_dir="spike_weights"
         )
     if name == "ga":
-        from strategies.genetic_algorithm import RNNGeneticStrategy
+        from strategies.nn_random import RNNGeneticStrategy
         return RNNGeneticStrategy(
             num_trials=num_trials,
             generations=num_generations,
