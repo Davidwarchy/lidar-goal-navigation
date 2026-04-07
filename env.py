@@ -44,7 +44,8 @@ class RobotExplorationEnv:
                  strategy_name="unknown", strategy_parameters=None,
                  cache_size=1000,
                  enable_coverage=False,
-                 verbose=False
+                 verbose=False,
+                 action_space="discrete"
                  ): 
 
         # ------------------------------------------------------------------
@@ -126,6 +127,7 @@ class RobotExplorationEnv:
         # Strategy information
         self.strategy_name = strategy_name
         self.strategy_parameters = strategy_parameters or {}
+        self.action_space = action_space
         
         # Episode Tracking
         self.episode = 0
@@ -318,17 +320,30 @@ class RobotExplorationEnv:
     def step(self, action, extra_info=None):
         extra_info = extra_info or {}
 
-        # Map action to left/right wheel velocities
-        if action == 0:  # up
-            v_left = v_right = self.linear_speed
-        elif action == 1:  # down
-            v_left = v_right = -self.linear_speed
-        elif action == 2:  # left
-            v_left = +self.linear_speed / 4 # negative because of image coordinates
-            v_right = -self.linear_speed / 4
-        else:  # right
-            v_left = -self.linear_speed / 4 # negative because of image coordinates 
-            v_right = +self.linear_speed / 4 
+        # Handle action based on action_space type
+        if self.action_space == "continuous":
+            # Continuous: action is (linear_velocity_factor, angular_velocity_factor)
+            # factors are in range [-1, 1], applied to base speeds
+            if isinstance(action, (list, tuple)):
+                linear_factor = max(-1, min(1, action[0]))
+                angular_factor = max(-1, min(1, action[1]))
+            else:
+                linear_factor = 1.0
+                angular_factor = max(-1, min(1, float(action)))
+            v_left = self.linear_speed * linear_factor - self.angular_speed * angular_factor * self.linear_speed / 4
+            v_right = self.linear_speed * linear_factor + self.angular_speed * angular_factor * self.linear_speed / 4
+        else:
+            # Discrete: action is 0-3 (up, down, left, right)
+            if action == 0:  # up
+                v_left = v_right = self.linear_speed
+            elif action == 1:  # down
+                v_left = v_right = -self.linear_speed
+            elif action == 2:  # left
+                v_left = +self.linear_speed / 4
+                v_right = -self.linear_speed / 4
+            else:  # right
+                v_left = -self.linear_speed / 4 
+                v_right = +self.linear_speed / 4 
 
         # Update robot position
         self.robot_x, self.robot_y, self.robot_orientation = self._update_robot_position(
