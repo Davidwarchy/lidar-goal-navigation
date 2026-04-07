@@ -169,7 +169,8 @@ def main():
         max_steps=args.max_steps,
         strategy_name=strategy.name,
         strategy_parameters=strategy.parameters,
-        verbose=args.verbose
+        verbose=args.verbose,
+        action_space=args.action_space
     )
 
     print(f"\nRunning {strategy.name} on {args.env}...")
