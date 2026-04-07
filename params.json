@@ -4,8 +4,8 @@
     "description": "Options for robot exploration run",
     "options": {
         "action_space": {
-            "continuous": "Continuous action space (float values for velocity/angle)",
-            "discrete": "Discrete action space (categorical actions)"
+            "continuous": "Continuous action space - motor accepts float values [linear_factor, angular_factor] in range [-1, 1]",
+            "discrete": "Discrete action space - motor accepts integer values 0-3 (up, down, left, right)"
         },
         "action_distribution": {
             "stochastic": "Stochastic policy - sample from categorical distribution",
