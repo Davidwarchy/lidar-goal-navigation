@@ -42,8 +42,8 @@ def load_strategy(name,
         return UniformRunLengthStrategy(min_step=1, max_step=10)
 
     if name == "spike_nn":
-        from strategies.nn_spiking import SpikeNNGeneticStrategy
-        return SpikeNNGeneticStrategy(
+        from strategies.nn_spiking import NaturalSelectionNeuralNet
+        return NaturalSelectionNeuralNet(
             population_size=population_size,
             generations=num_generations,
             num_trials=num_trials,
