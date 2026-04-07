@@ -23,19 +23,19 @@ def load_strategy(name,
                   ):
     """Load strategy class based on name."""
     if name == "random":
-        from strategies.random_walk import RandomWalkStrategy
+        from strategies.random import RandomWalkStrategy
         return RandomWalkStrategy()
 
     if name == "levy":
-        from strategies.levy_walk import LevyWalkStrategy
+        from strategies.levy import LevyWalkStrategy
         return LevyWalkStrategy(alpha=1.6, min_step=1.0, max_step=200.0)
 
     if name == "levy_custom":
-        from strategies.levy_walk import LevyWalkStrategy
+        from strategies.levy import LevyWalkStrategy
         return LevyWalkStrategy(alpha=alpha, min_step=min_step, max_step=max_step)
 
     if name == "manual":
-        from strategies.manual_control import ManualControlStrategy
+        from strategies.manual import ManualControlStrategy
         return ManualControlStrategy()
     
     if name == "uniform":
@@ -69,7 +69,7 @@ def load_strategy(name,
 def parse_args():
     parser = argparse.ArgumentParser(description="Vectorized Robot Exploration")
     parser.add_argument("--strategy", type=str, default="random", 
-                        choices=["random", "spiking", "random_nn"],
+                        choices=["random", "levy", "levy_custom", "uniform", "manual", "spiking", "random_nn"],
                         help="Exploration strategy")
     parser.add_argument("--max_steps", type=int, default=1000)
     parser.add_argument("--num_envs", type=int, default=10, help="Number of parallel robots")
@@ -102,20 +102,29 @@ def parse_args():
 
 def main():
     args = parse_args()
-
-    # Load strategy with user-defined evolutionary parameters
+    
+    # Manual control override
+    if args.strategy == "manual":
+        args.num_envs = 1
+        args.render = True  # Force render for manual
+        print("Manual control mode - using 1 environment")
+    
+    # Load strategy
     strategy = load_strategy(
         args.strategy,
         population_size=args.population,
         num_generations=args.generations,
         num_trials=args.trials,
-        mutation_rate=args.mutation_rate
+        mutation_rate=args.mutation_rate,
+        alpha=args.alpha,
+        min_step=args.min_step,
+        max_step=args.max_step_len
     )
-
-    # Initialize Environment with correct num_envs
+    
+    # Initialize Environment
     env = VectorRobotExplorationEnv(
         map_image_path=get_map_path(args.env),
-        num_envs=args.population,
+        num_envs=args.num_envs,
         robot_radius=3,
         render=args.render,
         max_steps=args.max_steps,
@@ -124,15 +133,10 @@ def main():
         continue_after_goal=args.continue_after_goal,
         verbose=args.verbose
     )
-
-    print(f"Running vectorized {args.strategy} on {args.env}...")
-    print(f"Output directory: {env.output_dir}")
     
-    # Clean execution call
+    # Run
     strategy.run(env)
-    
     env.close()
-
 
 if __name__ == "__main__":
     main()

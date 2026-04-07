@@ -1,7 +1,7 @@
 from .base_strategy import BaseStrategy
-from .random_walk import RandomWalkStrategy
-from .levy_walk import LevyWalkStrategy
-from .manual_control import ManualControlStrategy
+from .random import RandomWalkStrategy
+from .levy import LevyWalkStrategy
+from .manual import ManualControlStrategy
 from .uniform import UniformRunLengthStrategy
 from .nn import NNStrategy
 
@@ -11,6 +11,5 @@ __all__ = [
     'LevyWalkStrategy',
     'ManualControlStrategy', 
     'UniformRunLengthStrategy',
-    'NaturalSelectionNeuralNet',
     'NNStrategy'
 ]
