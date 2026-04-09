@@ -15,7 +15,7 @@ class RandomWalkStrategy(BaseStrategy):
             if env.render_flag:
                 env.render()
             
-            if env.verbose and env.current_step % 1000 == 0:
+            if env.verbose and env.current_step % 20 == 0:
                 active = np.sum(~env.done)
                 print(f"Step {env.current_step}, Active agents: {active}")
         

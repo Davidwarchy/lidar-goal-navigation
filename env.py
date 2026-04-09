@@ -40,7 +40,7 @@ class VectorRobotExplorationEnv:
                  scale=2, fps=500,
                  robot_radius=5, num_rays=100, ray_length=200,
                  max_steps=1000,
-                 wheel_base=4.0, wheel_radius=0.75, dt=0.2,
+                 wheel_base=4.0, wheel_radius=0.75, dt=0.02,
                  linear_speed=15.0, angular_speed=1.0,
                  output_dir=None, render=False,
                  strategy_name="unknown", strategy_parameters=None,
@@ -357,11 +357,26 @@ class VectorRobotExplorationEnv:
         # Draw active robots
         for i in range(self.num_envs):
             if not self.done[i]:
-                dx, dy = int(self.robot_x[i] * self.scale), int(self.robot_y[i] * self.scale)
-                self.pygame.draw.circle(self.screen, (0, 0, 255), (dx, dy), int(self.robot_radius * self.scale))
+                center_x = int(self.robot_x[i] * self.scale)
+                center_y = int(self.robot_y[i] * self.scale)
+                radius = int(self.robot_radius * self.scale)
+                
+                # Robot body
+                self.pygame.draw.circle(self.screen, (0, 0, 255), (center_x, center_y), radius)
+                
+                # Heading direction (red line)
+                arrow_len = radius * 1.5
+                angle_rad = np.radians(self.robot_orientation[i])
+                end_x = int(center_x + arrow_len * np.cos(angle_rad))
+                end_y = int(center_y + arrow_len * np.sin(angle_rad))
+                self.pygame.draw.line(self.screen, (255, 0, 0), (center_x, center_y), (end_x, end_y), 2)
+                
+                # Tip dot
+                self.pygame.draw.circle(self.screen, (255, 255, 0), (end_x, end_y), 2)
         
         self.pygame.display.flip()
         self.clock.tick(self.fps)
+
 
     def close(self):
         if self._pygame_initialized: self.pygame.quit()
