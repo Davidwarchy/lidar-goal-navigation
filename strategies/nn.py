@@ -400,7 +400,12 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
 class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
                  mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
-                 network_type="spiking", **network_params):
+                 network_type="spiking",
+                 curriculum_enabled=False,
+                 curriculum_success_threshold=0.05,
+                 curriculum_consecutive_gens=3,
+                 curriculum_distance_increment=5.0,
+                 **network_params):
         """
         Parameters:
         -----------
@@ -430,7 +435,11 @@ class NNStrategy(BaseStrategy):
             "mutation_mag": mutation_mag,
             "max_samples_per_gen": max_samples_per_gen,
             "network_type": network_type,
-            "network_params": network_params
+            "network_params": network_params,
+            "curriculum_enabled": curriculum_enabled,
+            "curriculum_success_threshold": curriculum_success_threshold,
+            "curriculum_consecutive_gens": curriculum_consecutive_gens,
+            "curriculum_distance_increment": curriculum_distance_increment
         }
         super().__init__("vec_spike_nn", params)
         self.pop_size = population_size
@@ -441,6 +450,10 @@ class NNStrategy(BaseStrategy):
         self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params
+        self.curriculum_enabled = curriculum_enabled
+        self.curriculum_success_threshold = curriculum_success_threshold
+        self.curriculum_consecutive_gens = max(1, curriculum_consecutive_gens)
+        self.curriculum_distance_increment = curriculum_distance_increment
 
     def run(self, env):
         """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
@@ -448,6 +461,7 @@ class NNStrategy(BaseStrategy):
         import time
         
         for trial in range(1, self.num_trials + 1):
+            curriculum_streak = 0
             # Create trial directory
             trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
             os.makedirs(trial_dir, exist_ok=True)
@@ -567,6 +581,27 @@ class NNStrategy(BaseStrategy):
                 gen_duration = time.time() - gen_start_time
                 survivor_indices = np.where(reached_goal)[0]
                 success_rate = (len(survivor_indices) / self.pop_size) * 100
+                curriculum_promoted = False
+
+                curriculum_active = (
+                    self.network_type == "feedforward"
+                    and self.curriculum_enabled
+                )
+                if curriculum_active:
+                    if success_rate >= (self.curriculum_success_threshold * 100.0):
+                        curriculum_streak += 1
+                    else:
+                        curriculum_streak = 0
+
+                    if curriculum_streak >= self.curriculum_consecutive_gens:
+                        env.goal_spawn_dist += self.curriculum_distance_increment
+                        curriculum_streak = 0
+                        curriculum_promoted = True
+                        gen_pbar.write(
+                            "[CURRICULUM] "
+                            f"Trial {trial} Gen {gen}: "
+                            f"goal_spawn_dist -> {env.goal_spawn_dist:.2f}"
+                        )
                 
                 # Calculate generation statistics for successful individuals
                 path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
@@ -589,7 +624,10 @@ class NNStrategy(BaseStrategy):
                     "generation_duration_seconds": gen_duration,
                     "total_steps_in_gen": steps,
                     "max_samples_per_gen": self.max_samples_per_gen,
-                    "samples_saved": len(os.listdir(samples_dir))
+                    "samples_saved": len(os.listdir(samples_dir)),
+                    "goal_spawn_distance": float(env.goal_spawn_dist),
+                    "curriculum_streak": int(curriculum_streak if curriculum_active else 0),
+                    "curriculum_promoted": bool(curriculum_promoted)
                 }
                 
                 gen_stats_path = os.path.join(gen_dir, "log.json")
@@ -611,14 +649,18 @@ class NNStrategy(BaseStrategy):
                         writer.writerow(["generation", "success_rate_percent", "num_successful", 
                                         "avg_path_length", "avg_energy_remaining", 
                                         "avg_health_remaining", "avg_initial_distance_to_reward",
-                                        "gen_duration_seconds", "total_steps_in_gen"])
+                                        "gen_duration_seconds", "total_steps_in_gen",
+                                        "goal_spawn_distance", "curriculum_streak", "curriculum_promoted"])
                     writer.writerow([
                         gen, f"{success_rate:.2f}%", len(survivor_indices),
                         f"{np.mean(path_lengths) if path_lengths else 0:.2f}",
                         f"{np.mean(energies) if energies else 0:.2f}",
                         f"{np.mean(healths) if healths else 0:.2f}",
                         f"{np.mean(initial_dists) if initial_dists else 0:.2f}",
-                        f"{gen_duration:.2f}", steps
+                        f"{gen_duration:.2f}", steps,
+                        f"{env.goal_spawn_dist:.2f}",
+                        curriculum_streak if curriculum_active else 0,
+                        "yes" if curriculum_promoted else "no"
                     ])
                 
                 if len(survivor_indices) == 0:

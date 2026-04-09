@@ -19,7 +19,11 @@ def load_strategy(name,
                   population_size=100, 
                   mutation_rate=0.1,
                   load_weights=False,
-                  weights_dir="weights"
+                  weights_dir="weights",
+                  ga_curriculum_enabled=False,
+                  ga_curriculum_success_threshold=0.05,
+                  ga_curriculum_consecutive_gens=3,
+                  ga_curriculum_distance_increment=5.0
                   ):
     """Load strategy class based on name."""
     if name == "random":
@@ -61,7 +65,11 @@ def load_strategy(name,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
             mutation_mag=0.5,
-            network_type="feedforward"
+            network_type="feedforward",
+            curriculum_enabled=ga_curriculum_enabled,
+            curriculum_success_threshold=ga_curriculum_success_threshold,
+            curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
+            curriculum_distance_increment=ga_curriculum_distance_increment,
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -95,6 +103,29 @@ def parse_args():
     parser.add_argument("--load_weights", type=str, default=None, help="Path to weights")
     parser.add_argument("--weights_dir", type=str, default="ga_weights", help="Directory to save/load weights")
     parser.add_argument("--mutation_rate", type=float, default=0.1, help="Mutation rate for genetic algorithm")
+    parser.add_argument(
+        "--ga_curriculum",
+        action="store_true",
+        help="Enable generation-based curriculum for feedforward GA (`random_nn`) only"
+    )
+    parser.add_argument(
+        "--ga_curriculum_success_threshold",
+        type=float,
+        default=0.05,
+        help="Minimum generation success rate to count toward curriculum streak (default 0.05)"
+    )
+    parser.add_argument(
+        "--ga_curriculum_consecutive_gens",
+        type=int,
+        default=3,
+        help="Consecutive qualifying generations needed before increasing goal distance"
+    )
+    parser.add_argument(
+        "--ga_curriculum_distance_increment",
+        type=float,
+        default=5.0,
+        help="Goal distance increase after curriculum promotion"
+    )
 
     parser.add_argument("--verbose", action="store_true", help="Verbose output during trials")
 
@@ -118,7 +149,11 @@ def main():
         mutation_rate=args.mutation_rate,
         alpha=args.alpha,
         min_step=args.min_step,
-        max_step=args.max_step_len
+        max_step=args.max_step_len,
+        ga_curriculum_enabled=args.ga_curriculum,
+        ga_curriculum_success_threshold=args.ga_curriculum_success_threshold,
+        ga_curriculum_consecutive_gens=args.ga_curriculum_consecutive_gens,
+        ga_curriculum_distance_increment=args.ga_curriculum_distance_increment
     )
     
     # Initialize Environment
