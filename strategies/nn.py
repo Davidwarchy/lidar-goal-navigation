@@ -116,6 +116,7 @@ class VectorFeedforwardNetwork(NeuralNetwork):
         
         for i in range(len(layer_sizes) - 1):
             # He initialization for ReLU
+            # Shape: (num_envs, layer_sizes[i], layer_sizes[i+1])
             w = np.random.randn(num_envs, layer_sizes[i], layer_sizes[i+1]) * np.sqrt(2.0 / layer_sizes[i])
             b = np.zeros((num_envs, layer_sizes[i+1]))
             self.weights.append(w)
@@ -145,14 +146,16 @@ class VectorFeedforwardNetwork(NeuralNetwork):
         --------
         output : (num_envs, output_size) array
         """
-        x = inputs
+        x = inputs  # Shape: (num_envs, input_size)
         
         # Hidden layers with ReLU
         for i in range(len(self.weights) - 1):
-            x = np.maximum(0, np.einsum('bij,bj->bi', self.weights[i], x) + self.biases[i])
+            # For each agent: output = ReLU(input @ weight + bias)
+            # Using einsum: (num_envs, input_dim) @ (num_envs, input_dim, output_dim) -> (num_envs, output_dim)
+            x = np.maximum(0, np.einsum('bi,bij->bj', x, self.weights[i]) + self.biases[i])
         
-        # Output layer (linear)
-        x = np.einsum('bij,bj->bi', self.weights[-1], x) + self.biases[-1]
+        # Output layer (linear) - no ReLU
+        x = np.einsum('bi,bij->bj', x, self.weights[-1]) + self.biases[-1]
         
         return x
     
@@ -405,7 +408,7 @@ class NNStrategy(BaseStrategy):
         Parameters:
         -----------
         population_size : int
-            Number of agents per generation
+            Number of agents per generation (also used as num_envs)
         generations : int
             Maximum number of generations
         num_trials : int
@@ -447,6 +450,11 @@ class NNStrategy(BaseStrategy):
         from tqdm import tqdm
         import time
         
+        # Ensure environment matches population size
+        if env.num_envs != self.pop_size:
+            raise ValueError(f"Environment has {env.num_envs} agents but strategy expects {self.pop_size}. "
+                           f"Run with --population {env.num_envs} to match.")
+        
         for trial in range(1, self.num_trials + 1):
             # Create trial directory
             trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
@@ -455,7 +463,7 @@ class NNStrategy(BaseStrategy):
             # Create population using factory
             pop_brain = create_vector_neural_network(
                 self.network_type,
-                self.pop_size,
+                self.pop_size,  # This now matches env.num_envs
                 env.num_rays,
                 4,  # 4 actions
                 **self.network_params

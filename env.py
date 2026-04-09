@@ -44,7 +44,7 @@ class VectorRobotExplorationEnv:
                  linear_speed=15.0, angular_speed=1.0,
                  output_dir=None, render=False,
                  strategy_name="unknown", strategy_parameters=None,
-                 use_lut=False,
+                 use_lut=True,
                  continue_after_goal=False,
                  verbose=False):
 

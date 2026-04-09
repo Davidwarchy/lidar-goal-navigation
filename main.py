@@ -24,15 +24,17 @@ def load_strategy(name,
     """Load strategy class based on name."""
     if name == "random":
         from strategies.random import RandomWalkStrategy
-        return RandomWalkStrategy()
+        return RandomWalkStrategy(num_trials=num_trials, max_generations=num_generations)
 
     if name == "levy":
         from strategies.levy import LevyWalkStrategy
-        return LevyWalkStrategy(alpha=1.6, min_step=1.0, max_step=200.0)
+        return LevyWalkStrategy(alpha=1.6, min_step=1.0, max_step=200.0, 
+                                num_trials=num_trials, max_generations=num_generations)
 
     if name == "levy_custom":
         from strategies.levy import LevyWalkStrategy
-        return LevyWalkStrategy(alpha=alpha, min_step=min_step, max_step=max_step)
+        return LevyWalkStrategy(alpha=alpha, min_step=min_step, max_step=max_step,
+                                num_trials=num_trials, max_generations=num_generations)
 
     if name == "manual":
         from strategies.manual import ManualControlStrategy
@@ -40,7 +42,8 @@ def load_strategy(name,
     
     if name == "uniform":
         from strategies.uniform import UniformRunLengthStrategy
-        return UniformRunLengthStrategy(min_step=1, max_step=10)
+        return UniformRunLengthStrategy(min_step=1, max_step=10,
+                                        num_trials=num_trials, max_generations=num_generations)
 
     if name == "spiking":
         from strategies.nn import NNStrategy
@@ -72,7 +75,7 @@ def parse_args():
                         choices=["random", "levy", "levy_custom", "uniform", "manual", "spiking", "random_nn"],
                         help="Exploration strategy")
     parser.add_argument("--max_steps", type=int, default=1000)
-    parser.add_argument("--num_envs", type=int, default=10, help="Number of parallel robots")
+    parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")  # Changed default to 10, removed num_envs
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--env", type=str, default="6.png")
     parser.add_argument("--use_lut", action="store_true")
@@ -85,8 +88,6 @@ def parse_args():
     # New Evolutionary/Trial Arguments
     parser.add_argument("--trials", type=int, default=20, help="Number of independent trials") 
     parser.add_argument("--generations", type=int, default=50, help="Generations per trial") 
-    parser.add_argument("--population", type=int, default=1000, help="Individuals per generation") 
-
 
     # Custom Lévy walk parameters
     parser.add_argument("--alpha", type=float, default=1.6)
@@ -105,8 +106,8 @@ def main():
     
     # Manual control override
     if args.strategy == "manual":
-        args.num_envs = 1
-        args.render = True  # Force render for manual
+        args.population = 1  # Force single robot for manual
+        args.render = True
         print("Manual control mode - using 1 environment")
     
     # Load strategy
@@ -121,10 +122,10 @@ def main():
         max_step=args.max_step_len
     )
     
-    # Initialize Environment
+    # Initialize Environment with population size
     env = VectorRobotExplorationEnv(
         map_image_path=get_map_path(args.env),
-        num_envs=args.num_envs,
+        num_envs=args.population,  # Use population here
         robot_radius=3,
         render=args.render,
         max_steps=args.max_steps,
@@ -141,13 +142,11 @@ def main():
 if __name__ == "__main__":
     main()
 
-    # example commands
-    # --- RANDOM WALK --- 
-    # python main.py --strategy random --max_steps 1000 --env 6.png
-    # python main.py --strategy random --env 6.png --use_lut --max_steps 100000 --continue_after_goal
-    # --- SPIKING --- 
-    # python main.py --strategy spike_nn --trials 50 --generations 50 --population 1000 --max_steps 1000 --env 6.png
-    # --- GA --- 
-    # python main.py --strategy ga --trials 5 --generations 5 --population 10 --max_steps 1000 --env 6.png
-    # --- PROFILING ---
-    # python -m cProfile -s tottime main.py --strategy random --env 6.png --use_lut --max_steps 100_000 --continue_after_goal > xprofile.txt
+# example commands
+# --- RANDOM WALK --- 
+# python main.py --strategy random --max_steps 1000 --population 10 --env 6.png
+# python main.py --strategy random --env 6.png --use_lut --max_steps 100000 --continue_after_goal --population 10
+# --- SPIKING --- 
+# python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png
+# --- PROFILING ---
+# python -m cProfile -s tottime main.py --strategy random --env 6.png --use_lut --max_steps 100_000 --continue_after_goal --population 10 > xprofile.txt
