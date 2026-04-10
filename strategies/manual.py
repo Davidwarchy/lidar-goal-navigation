@@ -45,7 +45,7 @@ class ManualControlStrategy(BaseStrategy):
             # Only step when a key is pressed (vectorized with single action)
             if action is not None:
                 actions = np.array([action])  # Vectorized: array of 1 action
-                obs, reward, dones, info = env.step(actions)
+                obs, reward, dones, info = env.step(actions, action_space="discrete")
                 done = dones[0]
                 
                 if env.verbose:

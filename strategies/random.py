@@ -44,7 +44,7 @@ class RandomWalkStrategy(BaseStrategy, StrategyLoggingMixin):
                 # Run this generation
                 while not np.all(env.done):
                     actions = np.random.randint(0, 4, size=env.num_envs)
-                    obs, rewards, dones, info = env.step(actions)
+                    obs, rewards, dones, info = env.step(actions, action_space="discrete")
                     
                     # Track newly reached goals
                     new_goals = info["goal_reached"] & ~goal_reached

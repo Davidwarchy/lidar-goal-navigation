@@ -59,7 +59,7 @@ class LevyWalkStrategy(BaseStrategy, StrategyLoggingMixin):
                 while not np.all(env.done):
                     # Step with current directions
                     actions = direction.copy()
-                    obs, rewards, dones, info = env.step(actions)
+                    obs, rewards, dones, info = env.step(actions, action_space="discrete")
                     
                     # Track newly reached goals
                     new_goals = info["goal_reached"] & ~goal_reached

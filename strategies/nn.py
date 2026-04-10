@@ -402,14 +402,16 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
 
 class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
-                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
-                 network_type="spiking",
-                 save_top_k=5,
-                 curriculum_enabled=False,
-                 curriculum_success_threshold=0.05,
-                 curriculum_consecutive_gens=3,
-                 curriculum_distance_increment=5.0,
-                 **network_params):
+                mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
+                network_type="spiking",
+                save_top_k=5,
+                curriculum_enabled=False,
+                curriculum_success_threshold=0.05,
+                curriculum_consecutive_gens=3,
+                curriculum_distance_increment=5.0,
+                action_space="discrete",  # Add this parameter
+                action_distribution="deterministic",  # Add this parameter
+                **network_params):
         """
         Parameters:
         -----------
@@ -429,6 +431,10 @@ class NNStrategy(BaseStrategy):
             Type of neural network to use ("spiking" or "feedforward")
         save_top_k : int
             Number of top individuals to save per generation (0 = don't save weights)
+        action_space : str
+            "discrete" (4 actions: up/down/left/right) or "continuous" (linear/angular velocity)
+        action_distribution : str
+            "deterministic" (argmax) or "stochastic" (sample from softmax)
         **network_params : additional parameters passed to network factory
             For spiking: hidden_size, n_steps
             For feedforward: hidden_sizes
@@ -446,7 +452,9 @@ class NNStrategy(BaseStrategy):
             "curriculum_enabled": curriculum_enabled,
             "curriculum_success_threshold": curriculum_success_threshold,
             "curriculum_consecutive_gens": curriculum_consecutive_gens,
-            "curriculum_distance_increment": curriculum_distance_increment
+            "curriculum_distance_increment": curriculum_distance_increment,
+            "action_space": action_space,  # ADD THIS
+            "action_distribution": action_distribution  # ADD THIS
         }
         super().__init__("vec_spike_nn", params)
         self.pop_size = population_size
@@ -463,6 +471,12 @@ class NNStrategy(BaseStrategy):
         self.curriculum_consecutive_gens = max(1, curriculum_consecutive_gens)
         self.curriculum_distance_increment = curriculum_distance_increment
 
+        self.action_space = action_space
+        self.action_distribution = action_distribution
+        # Store speed limits for continuous actions (will be set when env is available)
+        self.linear_speed = None
+        self.angular_speed = None
+
     def run(self, env):
         """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
         from tqdm import tqdm
@@ -473,6 +487,9 @@ class NNStrategy(BaseStrategy):
             raise ValueError(f"Environment has {env.num_envs} agents but strategy expects {self.pop_size}. "
                         f"Run with --population {env.num_envs} to match.")
         
+        # Set speed limits from environment
+        self.linear_speed = env.linear_speed
+        self.angular_speed = env.angular_speed
         for trial in range(1, self.num_trials + 1):
             curriculum_streak = 0
             # Create trial directory
@@ -536,8 +553,13 @@ class NNStrategy(BaseStrategy):
                     while True:
                         # Parallel inference and step
                         output = pop_brain.forward(obs / env.ray_length)
-                        actions = np.argmax(output, axis=1)
-                        obs, rewards, dones, info = env.step(actions)
+
+                        if self.action_space == "discrete":
+                            actions = self._get_discrete_action(output)
+                        else:  # continuous
+                            actions = self._get_continuous_action(output)
+
+                        obs, rewards, dones, info = env.step(actions, action_space=self.action_space)
                         
                         steps += 1
                         
@@ -708,3 +730,61 @@ class NNStrategy(BaseStrategy):
             new_genomes.append(child_genome)
         
         return new_genomes
+
+    # Add these methods to NNStrategy class
+
+    def _get_discrete_action(self, output):
+        """
+        Get discrete action from neural network output.
+        
+        Parameters:
+        -----------
+        output : (num_envs, output_size) array
+            Network output logits/probabilities
+        
+        Returns:
+        --------
+        actions : (num_envs,) array of integers in {0,1,2,3}
+        """
+        if self.action_distribution == "deterministic":
+            return np.argmax(output, axis=1)
+        else:  # stochastic
+            # Apply softmax to get probabilities
+            exp_output = np.exp(output - np.max(output, axis=1, keepdims=True))
+            probs = exp_output / np.sum(exp_output, axis=1, keepdims=True)
+            # Sample actions
+            actions = np.array([np.random.choice(4, p=probs[i]) for i in range(len(probs))])
+            return actions
+
+    def _get_continuous_action(self, output):
+        """
+        Get continuous action from neural network output.
+        
+        Parameters:
+        -----------
+        output : (num_envs, output_size) array
+            Network output - first 2 values used for linear and angular velocity
+        
+        Returns:
+        --------
+        actions : (num_envs, 2) array of [linear_velocity, angular_velocity]
+        """
+        # Extract linear and angular velocities
+        linear_vel = output[:, 0]
+        angular_vel = output[:, 1]
+        
+        # Normalize to reasonable ranges
+        linear_vel = np.clip(linear_vel, -1, 1) * self.linear_speed  # Scale to max linear speed
+        angular_vel = np.clip(angular_vel, -1, 1) * 90  # Scale to max 90 deg/s
+        
+        actions = np.stack([linear_vel, angular_vel], axis=1)
+        
+        if self.action_distribution == "stochastic":
+            # Add exploration noise
+            noise_scale = 0.1
+            actions += np.random.randn(*actions.shape) * noise_scale
+            # Re-clip after noise
+            actions[:, 0] = np.clip(actions[:, 0], -self.linear_speed, self.linear_speed)
+            actions[:, 1] = np.clip(actions[:, 1], -90, 90)
+        
+        return actions

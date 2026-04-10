@@ -190,19 +190,44 @@ class VectorRobotExplorationEnv:
                 return tx, ty
         return start_x, start_y
 
-    def step(self, actions):
+    def step(self, actions, action_space="discrete"):
+        """
+        Take a step in the environment.
+        
+        Parameters:
+        -----------
+        actions : array-like
+            For discrete: (num_envs,) array of integers in {0,1,2,3}
+            For continuous: (num_envs, 2) array of [linear_velocity, angular_velocity]
+        action_space : str
+            "discrete" or "continuous"
+        """
         # Only decrement health for robots that are still active (not done)
         active_mask = ~self.done
         
-        v_left = np.zeros(self.num_envs)
-        v_right = np.zeros(self.num_envs)
-
-        # Vectorized action mapping
-        v_left[actions == 0] = v_right[actions == 0] = self.linear_speed # Up
-        v_left[actions == 1] = v_right[actions == 1] = -self.linear_speed # Down
-        v_left[actions == 2], v_right[actions == 2] = self.linear_speed/4, -self.linear_speed/4 # Left
-        v_left[actions == 3], v_right[actions == 3] = -self.linear_speed/4, self.linear_speed/4 # Right
-
+        if action_space == "discrete":
+            # Vectorized action mapping for discrete actions
+            v_left = np.zeros(self.num_envs)
+            v_right = np.zeros(self.num_envs)
+            
+            # Up (action 0)
+            v_left[actions == 0] = v_right[actions == 0] = self.linear_speed
+            # Down (action 1)
+            v_left[actions == 1] = v_right[actions == 1] = -self.linear_speed
+            # Left (action 2)
+            v_left[actions == 2], v_right[actions == 2] = self.linear_speed/4, -self.linear_speed/4
+            # Right (action 3)
+            v_left[actions == 3], v_right[actions == 3] = -self.linear_speed/4, self.linear_speed/4
+            
+        else:  # continuous action space
+            # Actions shape: (num_envs, 2) - [linear_velocity, angular_velocity]
+            # Convert to wheel velocities
+            linear_vel = actions[:, 0]
+            angular_vel = actions[:, 1]  # degrees per second
+            
+            v_left = linear_vel - (angular_vel * self.wheel_base / 2) / self.wheel_radius
+            v_right = linear_vel + (angular_vel * self.wheel_base / 2) / self.wheel_radius
+        
         # Update positions
         self._update_robot_positions(v_left, v_right)
         # 2. Get Perception

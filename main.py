@@ -23,7 +23,9 @@ def load_strategy(name,
                   ga_curriculum_enabled=False,
                   ga_curriculum_success_threshold=0.05,
                   ga_curriculum_consecutive_gens=3,
-                  ga_curriculum_distance_increment=5.0
+                  ga_curriculum_distance_increment=5.0, 
+                  action_space="discrete",
+                  action_distribution="deterministic"
                   ):
     """Load strategy class based on name."""
     if name == "random":
@@ -57,9 +59,11 @@ def load_strategy(name,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
             mutation_mag=0.5,
-            network_type="spiking"
+            network_type="spiking",
+            action_space=action_space,  
+            action_distribution=action_distribution 
         )
-    
+
     if name == "random_nn":
         from strategies.nn import NNStrategy
         return NNStrategy(
@@ -73,6 +77,8 @@ def load_strategy(name,
             curriculum_success_threshold=ga_curriculum_success_threshold,
             curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
             curriculum_distance_increment=ga_curriculum_distance_increment,
+            action_space=action_space, 
+            action_distribution=action_distribution 
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -137,6 +143,22 @@ def parse_args():
         help="Number of top individuals to save per generation (0 = don't save weights)"
     )
 
+    parser.add_argument(
+        "--action_space",
+        type=str,
+        default="discrete",
+        choices=["discrete", "continuous"],
+        help="Action space type: discrete (4 actions) or continuous (linear/angular velocity)"
+    )
+
+    parser.add_argument(
+        "--action_distribution",
+        type=str,
+        default="deterministic",
+        choices=["deterministic", "stochastic"],
+        help="Action distribution: deterministic (argmax) or stochastic (sample from softmax)"
+    )
+
     return parser.parse_args()
 
 def main():
@@ -161,7 +183,9 @@ def main():
         ga_curriculum_enabled=args.ga_curriculum,
         ga_curriculum_success_threshold=args.ga_curriculum_success_threshold,
         ga_curriculum_consecutive_gens=args.ga_curriculum_consecutive_gens,
-        ga_curriculum_distance_increment=args.ga_curriculum_distance_increment
+        ga_curriculum_distance_increment=args.ga_curriculum_distance_increment, 
+        action_space=args.action_space,
+        action_distribution=args.action_distribution 
     )
     
     # Initialize Environment with population size

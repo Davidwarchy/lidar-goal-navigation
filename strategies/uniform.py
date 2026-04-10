@@ -47,7 +47,7 @@ class UniformRunLengthStrategy(BaseStrategy, StrategyLoggingMixin):
                 # Run this generation
                 while not np.all(env.done):
                     actions = direction.copy()
-                    obs, rewards, dones, info = env.step(actions)
+                    obs, rewards, dones, info = env.step(actions, action_space="discrete")
                     
                     # Track newly reached goals
                     new_goals = info["goal_reached"] & ~goal_reached
