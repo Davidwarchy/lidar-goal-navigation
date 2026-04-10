@@ -97,7 +97,7 @@ class VectorRobotExplorationEnv:
         # Survival/Goal parameters
         self.goal_x = np.zeros(num_envs, dtype=np.float32)
         self.goal_y = np.zeros(num_envs, dtype=np.float32)
-        self.goal_success_dist = 1.0 
+        self.goal_success_dist = 6.0 
         self.goal_spawn_dist = 30.0 
 
         self.lidar_angles = np.linspace(-45, 45, self.num_rays)
@@ -354,6 +354,20 @@ class VectorRobotExplorationEnv:
         map_surf = self.pygame.surfarray.make_surface(np.transpose(np.stack([self.map_image]*3, axis=-1), (1,0,2)))
         self.screen.blit(self.pygame.transform.scale(map_surf, (self.window_width, self.window_height)), (0,0))
         
+        # Draw goals for all active robots
+        for i in range(self.num_envs):
+            if not self.done[i]:
+                goal_x = int(self.goal_x[i] * self.scale)
+                goal_y = int(self.goal_y[i] * self.scale)
+                radius = int(self.goal_success_dist * self.scale)
+                
+                # Outer ring (bright green)
+                self.pygame.draw.circle(self.screen, (0, 255, 0), (goal_x, goal_y), radius, 2)
+                # Inner circle (lighter green)
+                self.pygame.draw.circle(self.screen, (100, 255, 100), (goal_x, goal_y), max(2, radius // 2))
+                # Center bullseye
+                self.pygame.draw.circle(self.screen, (255, 255, 255), (goal_x, goal_y), max(2, radius // 4))
+        
         # Draw active robots
         for i in range(self.num_envs):
             if not self.done[i]:
@@ -376,7 +390,6 @@ class VectorRobotExplorationEnv:
         
         self.pygame.display.flip()
         self.clock.tick(self.fps)
-
 
     def close(self):
         if self._pygame_initialized: self.pygame.quit()
