@@ -90,7 +90,7 @@ class VectorRobotExplorationEnv:
         self.robot_y = np.zeros(num_envs, dtype=np.float32)
         self.robot_orientation = np.zeros(num_envs, dtype=np.float32)
         self.energy = np.full(num_envs, max_steps, dtype=np.int32)
-        self.health = np.full(num_envs, 200, dtype=np.int32)
+        self.health = np.full(num_envs, 500, dtype=np.int32)
         self.done = np.zeros(num_envs, dtype=bool)
         self.current_step = 0
         
@@ -164,7 +164,7 @@ class VectorRobotExplorationEnv:
         self.robot_orientation.fill(0)
         self.current_step = 0
         self.energy.fill(self.max_steps)
-        self.health.fill(200)
+        self.health.fill(500)
         self.done.fill(False)
 
         return self._get_observation()

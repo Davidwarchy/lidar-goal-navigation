@@ -99,6 +99,13 @@ def parse_args():
 
     parser.add_argument("--verbose", action="store_true", help="Verbose output during trials")
 
+    parser.add_argument(
+        "--save_top_k", 
+        type=int, 
+        default=5, 
+        help="Number of top individuals to save per generation (0 = don't save weights)"
+    )
+
     return parser.parse_args()
 
 def main():

@@ -403,7 +403,7 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
 class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
                  mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
-                 network_type="spiking", **network_params):
+                 network_type="spiking", save_top_k=5, **network_params):
         """
         Parameters:
         -----------
@@ -421,6 +421,8 @@ class NNStrategy(BaseStrategy):
             Maximum number of successful individuals to save per generation
         network_type : str
             Type of neural network to use ("spiking" or "feedforward")
+        save_top_k : int
+            Number of top individuals to save per generation (0 = don't save weights)
         **network_params : additional parameters passed to network factory
             For spiking: hidden_size, n_steps
             For feedforward: hidden_sizes
@@ -433,6 +435,7 @@ class NNStrategy(BaseStrategy):
             "mutation_mag": mutation_mag,
             "max_samples_per_gen": max_samples_per_gen,
             "network_type": network_type,
+            "save_top_k": save_top_k,
             "network_params": network_params
         }
         super().__init__("vec_spike_nn", params)
@@ -444,7 +447,8 @@ class NNStrategy(BaseStrategy):
         self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params
-
+        self.save_top_k = save_top_k
+        
     def run(self, env):
         """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
         from tqdm import tqdm
@@ -453,7 +457,7 @@ class NNStrategy(BaseStrategy):
         # Ensure environment matches population size
         if env.num_envs != self.pop_size:
             raise ValueError(f"Environment has {env.num_envs} agents but strategy expects {self.pop_size}. "
-                           f"Run with --population {env.num_envs} to match.")
+                        f"Run with --population {env.num_envs} to match.")
         
         for trial in range(1, self.num_trials + 1):
             # Create trial directory
@@ -463,7 +467,7 @@ class NNStrategy(BaseStrategy):
             # Create population using factory
             pop_brain = create_vector_neural_network(
                 self.network_type,
-                self.pop_size,  # This now matches env.num_envs
+                self.pop_size,
                 env.num_rays,
                 4,  # 4 actions
                 **self.network_params
@@ -479,9 +483,10 @@ class NNStrategy(BaseStrategy):
                 gen_dir = os.path.join(trial_dir, f"gen_{gen}")
                 os.makedirs(gen_dir, exist_ok=True)
                 
-                # Create samples directory
-                samples_dir = os.path.join(gen_dir, "samples")
-                os.makedirs(samples_dir, exist_ok=True)
+                # Create top_k directory (for saving best individuals)
+                if self.save_top_k > 0:
+                    top_k_dir = os.path.join(gen_dir, "top_k")
+                    os.makedirs(top_k_dir, exist_ok=True)
                 
                 obs = env.reset()
                 
@@ -501,16 +506,13 @@ class NNStrategy(BaseStrategy):
                 gen_start_time = time.time()
                 steps = 0
                 
-                # Track progress over steps for this generation
-                goals_reached_by_step = set()
-                
-                # Track which individuals have reached the goal and their success metrics
+                # Track which individuals have reached the goal
                 reached_goal = np.zeros(self.pop_size, dtype=bool)
                 success_steps = np.full(self.pop_size, -1, dtype=int)
                 success_energy = np.full(self.pop_size, -1, dtype=float)
                 success_health = np.full(self.pop_size, -1, dtype=float)
                 
-                # CSV log for this generation (step-level data)
+                # Step-level logging
                 step_csv_path = os.path.join(gen_dir, "log.csv")
                 with open(step_csv_path, 'w', newline='') as step_f:
                     step_writer = csv.writer(step_f)
@@ -529,32 +531,12 @@ class NNStrategy(BaseStrategy):
                         new_success_indices = np.where(new_successes)[0]
                         
                         for idx in new_success_indices:
-                            goals_reached_by_step.add(idx)
                             reached_goal[idx] = True
                             success_steps[idx] = steps
                             success_energy[idx] = env.energy[idx]
                             success_health[idx] = env.health[idx]
-                            
-                            # Save sample weights for successful individuals (limited per gen)
-                            if len(os.listdir(samples_dir)) < self.max_samples_per_gen:
-                                sample_path = os.path.join(samples_dir, f"ind_{idx}.json")
-                                genome = pop_brain.get_genomes()[idx]
-                                sample_data = {
-                                    "individual_id": int(idx),
-                                    "generation": gen,
-                                    "trial": trial,
-                                    "weights": genome.tolist(),
-                                    "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
-                                    "initial_distance_to_reward": float(initial_distances[idx]),
-                                    "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
-                                    "steps_to_success": int(success_steps[idx]),
-                                    "energy_remaining": float(success_energy[idx]),
-                                    "health_remaining": float(success_health[idx])
-                                }
-                                with open(sample_path, 'w') as wf:
-                                    json.dump(sample_data, wf, indent=2)
                         
-                        percent_done = (len(goals_reached_by_step) / self.pop_size) * 100
+                        percent_done = (np.sum(reached_goal) / self.pop_size) * 100
                         step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
                         step_f.flush()
                         
@@ -571,18 +553,44 @@ class NNStrategy(BaseStrategy):
                         if np.all(dones):
                             break
                 
-                # 2. End-of-Generation reporting
+                # End-of-generation processing
                 gen_duration = time.time() - gen_start_time
                 survivor_indices = np.where(reached_goal)[0]
                 success_rate = (len(survivor_indices) / self.pop_size) * 100
                 
-                # Calculate generation statistics for successful individuals
+                # Save random survivors (no metric-based sorting)
+                if self.save_top_k > 0 and len(survivor_indices) > 0:
+                    # Randomly select survivors to save (no ranking, no sorting)
+                    survivors_list = list(survivor_indices)
+                    random.shuffle(survivors_list)  # Randomize order
+                    
+                    top_k = min(self.save_top_k, len(survivors_list))
+                    genomes = pop_brain.get_genomes()
+                    
+                    for idx in survivors_list[:top_k]:
+                        # Use timestamp or random ID to avoid filename collisions
+                        weight_path = os.path.join(top_k_dir, f"ind_{idx}.json")
+                        weight_data = {
+                            "individual_id": int(idx),
+                            "generation": gen,
+                            "trial": trial,
+                            "steps_to_success": int(success_steps[idx]),
+                            "energy_remaining": float(success_energy[idx]),
+                            "health_remaining": float(success_health[idx]),
+                            "initial_distance_to_reward": float(initial_distances[idx]),
+                            "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
+                            "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
+                            "weights": genomes[idx].tolist()
+                        }
+                        with open(weight_path, 'w') as wf:
+                            json.dump(weight_data, wf, indent=2)
+                # Calculate generation statistics
                 path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
                 energies = [success_energy[idx] for idx in survivor_indices if success_energy[idx] > 0]
                 healths = [success_health[idx] for idx in survivor_indices if success_health[idx] > 0]
                 initial_dists = [initial_distances[idx] for idx in survivor_indices]
                 
-                # Generate log.json for this generation
+                # Generate log.json
                 gen_stats = {
                     "generation": gen,
                     "trial": trial,
@@ -596,8 +604,8 @@ class NNStrategy(BaseStrategy):
                     "avg_initial_distance_to_reward": float(np.mean(initial_dists)) if initial_dists else 0,
                     "generation_duration_seconds": gen_duration,
                     "total_steps_in_gen": steps,
-                    "max_samples_per_gen": self.max_samples_per_gen,
-                    "samples_saved": len(os.listdir(samples_dir))
+                    "save_top_k": self.save_top_k,
+                    "top_k_saved": min(self.save_top_k, len(survivor_indices)) if self.save_top_k > 0 else 0
                 }
                 
                 gen_stats_path = os.path.join(gen_dir, "log.json")
@@ -610,7 +618,7 @@ class NNStrategy(BaseStrategy):
                     "Sec/Gen": f"{gen_duration:.1f}s"
                 })
                 
-                # Also maintain a trial-level summary CSV
+                # Trial summary CSV
                 trial_summary_path = os.path.join(trial_dir, "summary.csv")
                 file_exists = os.path.exists(trial_summary_path)
                 with open(trial_summary_path, 'a', newline='') as sf:
@@ -633,23 +641,26 @@ class NNStrategy(BaseStrategy):
                     gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
                     break
                 
+                # REPRODUCTION: Random selection (no elitism, no fitness sorting)
                 new_genomes = self._reproduce(pop_brain.get_genomes(), survivor_indices)
                 pop_brain.set_genomes(new_genomes)
-    
+
     def _reproduce(self, all_genomes, survivor_indices):
+        """
+        Reproduction with RANDOM selection of survivors.
+        No elitism, no fitness-based sorting. All survivors have equal chance.
+        """
         new_genomes = []
-        # Elitism: Keep best survivors
-        n_elites = max(1, self.pop_size // 10)
-        for i in range(min(n_elites, len(survivor_indices))):
-            new_genomes.append(all_genomes[survivor_indices[i]])
-            
-        # Mutation: Fill remaining population
+        
+        # Randomly select survivors with replacement to fill population
+        # (Uniform probability - all survivors equally likely to be parents)
         while len(new_genomes) < self.pop_size:
-            parent_idx = np.random.choice(survivor_indices)
+            parent_idx = np.random.choice(survivor_indices)  # Random, not sorted by anything
             child_genome = all_genomes[parent_idx].copy()
             
+            # Mutate
             mask = np.random.random(len(child_genome)) < self.mutation_rate
             child_genome[mask] += np.random.randn(np.sum(mask)) * self.mutation_mag
             new_genomes.append(child_genome)
-            
+        
         return new_genomes
