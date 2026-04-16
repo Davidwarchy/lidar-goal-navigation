@@ -264,9 +264,9 @@ class StrategyLoggingMixin:
             "max_generations": self.max_generations,
             "extinct": self.trial_extinct,
             "trial_duration_seconds": trial_duration,
-            "total_steps_across_generations": env.current_step * self.trial_generations_completed if hasattr(env, 'current_step') else 0,
-            "unique_successful_agents": len(self.trial_goals_reached),
-            "successful_agents_across_trial": list(self.trial_goals_reached)
+            # Convert NumPy types to standard Python types here:
+            "unique_successful_agents": int(len(self.trial_goals_reached)),
+            "successful_agents_across_trial": [int(idx) for idx in self.trial_goals_reached]
         }
         
         # Calculate trial-level success metrics
