@@ -161,6 +161,11 @@ def parse_args():
         help="Action distribution: deterministic (argmax) or stochastic (sample from softmax)"
     )
 
+        
+    parser.add_argument("--output_dir", type=str, default=None,
+                        help="Base output directory (default: './output')")
+
+
     return parser.parse_args()
 
 def main():
@@ -200,7 +205,8 @@ def main():
         strategy_name=strategy.name,
         use_lut=args.use_lut,
         continue_after_goal=args.continue_after_goal,
-        verbose=args.verbose
+        verbose=args.verbose, 
+        output_dir=args.output_dir
     )
     
     # Run

@@ -106,7 +106,8 @@ class VectorRobotExplorationEnv:
 
         # Output Setup
         timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        self.output_dir = output_dir or os.path.join("output", f"{timestamp}_{strategy_name}")
+        base_output_dir = output_dir if output_dir is not None else "output"
+        self.output_dir = os.path.join(base_output_dir, f"{timestamp}_{strategy_name}")
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.use_lut = use_lut
