@@ -7,3 +7,4 @@ spike_weights/*
 x.* 
 venv
 environments/luts/
+analysis/performance/results/
