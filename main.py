@@ -61,7 +61,8 @@ def load_strategy(name,
             mutation_mag=0.5,
             network_type="spiking",
             action_space=action_space,  
-            action_distribution=action_distribution 
+            action_distribution=action_distribution, 
+            strategy_name="nn_spiking" 
         )
 
     if name == "random_nn":
@@ -78,7 +79,8 @@ def load_strategy(name,
             curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
             curriculum_distance_increment=ga_curriculum_distance_increment,
             action_space=action_space, 
-            action_distribution=action_distribution 
+            action_distribution=action_distribution, 
+            strategy_name="nn_random"
         )
 
     raise ValueError(f"Unknown strategy: {name}")
