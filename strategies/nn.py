@@ -411,6 +411,7 @@ class NNStrategy(BaseStrategy):
                 curriculum_distance_increment=5.0,
                 action_space="discrete",  # Add this parameter
                 action_distribution="deterministic",  # Add this parameter
+                strategy_name="nn",
                 **network_params):
         """
         Parameters:
@@ -456,7 +457,7 @@ class NNStrategy(BaseStrategy):
             "action_space": action_space,  # ADD THIS
             "action_distribution": action_distribution  # ADD THIS
         }
-        super().__init__("vec_spike_nn", params)
+        super().__init__(strategy_name, params)
         self.pop_size = population_size
         self.max_gens = generations
         self.num_trials = num_trials
