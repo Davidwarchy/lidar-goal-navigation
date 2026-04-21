@@ -46,6 +46,7 @@ class VectorRobotExplorationEnv:
                  strategy_name="unknown", strategy_parameters=None,
                  use_lut=True,
                  continue_after_goal=False,
+                 goal_spawn_dist=30.0,
                  verbose=False):
 
         self.num_envs = num_envs
@@ -98,7 +99,7 @@ class VectorRobotExplorationEnv:
         self.goal_x = np.zeros(num_envs, dtype=np.float32)
         self.goal_y = np.zeros(num_envs, dtype=np.float32)
         self.goal_success_dist = 6.0 
-        self.goal_spawn_dist = 30.0 
+        self.goal_spawn_dist = goal_spawn_dist
 
         self.lidar_angles = np.linspace(-45, 45, self.num_rays)
         self.strategy_name = strategy_name
