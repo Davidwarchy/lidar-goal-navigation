@@ -29,7 +29,7 @@ MAP = "6.png"
 USE_LUT = True
 CONTINUE_AFTER_GOAL = False  # Set to True if you want robots to continue after reaching goal
 
-def get_command(strategy):
+def get_command(strategy, parallel=False):
     """Build command for each strategy with specific parameters"""
     
     base_cmd = [
@@ -50,6 +50,10 @@ def get_command(strategy):
     if CONTINUE_AFTER_GOAL:
         base_cmd.append("--continue_after_goal")
     
+    # Add parallel flag if requested
+    if parallel:
+        base_cmd.append("--parallel")
+    
     # Strategy-specific parameters
     if strategy == "levy":
         base_cmd.extend(["--alpha", "1.6", "--min_step", "1.0", "--max_step_len", "200.0"])
@@ -68,7 +72,7 @@ def get_command(strategy):
     
     return base_cmd
 
-def run_experiments():
+def run_experiments(parallel=False):
     """Run all strategies sequentially"""
     
     # Create timestamp for this mass run
@@ -92,11 +96,13 @@ def run_experiments():
         log.write(f"Map: {MAP}\n")
         log.write(f"Use LUT: {USE_LUT}\n")
         log.write(f"Continue after goal: {CONTINUE_AFTER_GOAL}\n")
+        log.write(f"Parallel trials: {parallel}\n")
         log.write("="*80 + "\n\n")
         
         print(f"\n{'='*80}")
         print(f"MASS EXPERIMENT RUN - {timestamp}")
         print(f"Trials: {TRIALS}, Generations: {GENERATIONS}, Population: {POPULATION}")
+        print(f"Parallel: {parallel}")
         print(f"Output directory: {base_output_dir}")
         print(f"{'='*80}\n")
         
@@ -106,7 +112,7 @@ def run_experiments():
             
             # Set output directory for this strategy
             strategy_output = os.path.join(base_output_dir, strategy)
-            cmd = get_command(strategy)
+            cmd = get_command(strategy, parallel=parallel)
             cmd.extend(["--output_dir", strategy_output])
             
             # Log command
@@ -179,7 +185,6 @@ def run_experiments():
             log.write(f"  Duration: {duration:.2f}s\n")
             log.write(f"  Output: {output_dir}\n")
             
-            # Print to console with color indication
             status_icon = "✓" if status == "success" else "✗"
             print(f"{status_icon} {strategy.upper():12} - {status:10} - {duration:8.2f}s - {output_dir}")
         
@@ -190,10 +195,10 @@ def run_experiments():
     
     return results
 
-def run_single_strategy(strategy, output_dir=None):
+def run_single_strategy(strategy, output_dir=None, parallel=False):
     """Run a single strategy with the same parameters"""
     
-    cmd = get_command(strategy)
+    cmd = get_command(strategy, parallel=parallel)
     
     if output_dir:
         cmd.extend(["--output_dir", output_dir])
@@ -215,6 +220,8 @@ if __name__ == "__main__":
                        help=f"Generations per trial (default: {GENERATIONS})")
     parser.add_argument("--population", type=int, default=POPULATION,
                        help=f"Population size (default: {POPULATION})")
+    parser.add_argument("--parallel", action="store_true",
+                       help="Run trials in parallel using multiprocessing")
     parser.add_argument("--dry-run", action="store_true",
                        help="Print commands without executing")
     
@@ -230,16 +237,16 @@ if __name__ == "__main__":
         print("="*60)
         if args.strategy == "all":
             for strategy in STRATEGIES:
-                cmd = get_command(strategy)
+                cmd = get_command(strategy, parallel=args.parallel)
                 print(f"\n{strategy}:")
                 print(f"  {' '.join(cmd)}")
         else:
-            cmd = get_command(args.strategy)
+            cmd = get_command(args.strategy, parallel=args.parallel)
             print(f"{' '.join(cmd)}")
         sys.exit(0)
     
     if args.strategy == "all":
-        run_experiments()
+        run_experiments(parallel=args.parallel)
     else:
         # Run single strategy
         timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
@@ -247,10 +254,14 @@ if __name__ == "__main__":
         os.makedirs(output_dir, exist_ok=True)
         
         print(f"Running {args.strategy} with {TRIALS} trials, {GENERATIONS} generations, {POPULATION} population")
+        print(f"Parallel: {args.parallel}")
         print(f"Output: {output_dir}")
         
-        cmd = get_command(args.strategy)
+        cmd = get_command(args.strategy, parallel=args.parallel)
         cmd.extend(["--output_dir", output_dir])
         
         result = subprocess.run(cmd)
         sys.exit(result.returncode)
+
+
+# python run_many.py --strategy all --parallel
