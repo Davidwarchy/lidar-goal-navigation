@@ -104,7 +104,13 @@ def parse_args():
     parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--env", type=str, default="6.png")
-    parser.add_argument("--use_lut", action="store_true")
+    parser.add_argument(
+        "--no_lut", 
+        dest="use_lut", 
+        action="store_false", 
+        default=True,
+        help="Disable the pre-calculated Look-Up Table and use ray marching instead (default: LUT is enabled)"
+    )
     parser.add_argument(    
         "--continue_after_goal",
         action="store_true",
@@ -151,7 +157,7 @@ def parse_args():
     parser.add_argument(
         "--save_top_k", 
         type=int, 
-        default=5, 
+        default=0, 
         help="Number of top individuals to save per generation (0 = don't save weights)"
     )
 

@@ -126,7 +126,7 @@ class VectorRobotExplorationEnv:
         base_name = os.path.splitext(os.path.basename(self.map_image_path))[0]
         lut_path = os.path.join("environments", "luts", f"{base_name}_360.npy")
         if os.path.exists(lut_path):
-            self.lidar_lut = np.load(lut_path)
+            self.lidar_lut = np.load(lut_path, mmap_mode='r')
         else:
             self.use_lut = False
 
@@ -313,7 +313,8 @@ class VectorRobotExplorationEnv:
             
             # 3. Vectorized LUT retrieval
             # We use advanced indexing to pull distances for all robots at once
-            return self.lidar_lut[iys, ixs, :][np.arange(self.num_envs)[:, None], angle_idxs]
+            return self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
+
 
         # FALLBACK: Vectorized Ray Marching (if LUT is not used/available)
         # Raise warning if LUT was intended but not loaded

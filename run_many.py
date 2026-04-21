@@ -263,5 +263,7 @@ if __name__ == "__main__":
         result = subprocess.run(cmd)
         sys.exit(result.returncode)
 
-
+# --- RUN ALL --- 
 # python run_many.py --strategy all --parallel
+# --- RUN NN STRATEGIES ONLY ---
+# python run_many.py --strategy random_nn --parallel

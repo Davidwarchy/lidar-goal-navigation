@@ -124,6 +124,11 @@ class VectorFeedforwardNetwork(NeuralNetwork):
             b = np.zeros((num_envs, layer_sizes[i+1]))
             self.weights.append(w)
             self.biases.append(b)
+
+        self._total_params = sum(
+            layer_in * layer_out + layer_out
+            for layer_in, layer_out in zip([input_size] + hidden_sizes, hidden_sizes + [output_size])
+        )
     
     @property
     def input_size(self) -> int:
@@ -149,19 +154,14 @@ class VectorFeedforwardNetwork(NeuralNetwork):
         --------
         output : (num_envs, output_size) array
         """
-        x = inputs  # Shape: (num_envs, input_size)
-        
-        # Hidden layers with ReLU
+        x = inputs
         for i in range(len(self.weights) - 1):
-            # For each agent: output = ReLU(input @ weight + bias)
-            # Using einsum: (num_envs, input_dim) @ (num_envs, input_dim, output_dim) -> (num_envs, output_dim)
-            x = np.maximum(0, np.einsum('bi,bij->bj', x, self.weights[i]) + self.biases[i])
-        
-        # Output layer (linear) - no ReLU
-        x = np.einsum('bi,bij->bj', x, self.weights[-1]) + self.biases[-1]
-        
+            # x: (num_envs, in_i) -> (num_envs, 1, in_i) @ (num_envs, in_i, out_i) -> (num_envs, 1, out_i) -> (num_envs, out_i)
+            x = np.maximum(0, (x[:, None, :] @ self.weights[i]).squeeze(1) + self.biases[i])
+        # Output layer (linear)
+        x = (x[:, None, :] @ self.weights[-1]).squeeze(1) + self.biases[-1]
         return x
-    
+        
     def reset_state(self):
         """Feedforward networks have no state to reset."""
         pass
@@ -190,31 +190,30 @@ class VectorFeedforwardNetwork(NeuralNetwork):
             self.biases[i] = b_flat.reshape(1, b.shape[1]).repeat(self.num_envs, axis=0)
             idx += b_size
     
-    def get_genomes(self) -> list:
-        """Get list of flat weight arrays for all agents."""
-        genomes = []
-        for agent_idx in range(self.num_envs):
-            all_weights = []
-            for w, b in zip(self.weights, self.biases):
-                all_weights.append(w[agent_idx].flatten())
-                all_weights.append(b[agent_idx].flatten())
-            genomes.append(np.concatenate(all_weights))
-        return genomes
-    
-    def set_genomes(self, genomes: list):
-        """Set weights from list of flat arrays."""
-        for agent_idx, genome in enumerate(genomes):
-            idx = 0
-            for i, (w, b) in enumerate(zip(self.weights, self.biases)):
-                w_size = w.shape[1] * w.shape[2]
-                b_size = b.shape[1]
-                
-                self.weights[i][agent_idx] = genome[idx:idx + w_size].reshape(w.shape[1], w.shape[2])
-                idx += w_size
-                
-                self.biases[i][agent_idx] = genome[idx:idx + b_size]
-                idx += b_size
+    def get_genomes(self) -> np.ndarray:
+        """Return (num_envs, total_params) array of all agent weights."""
+        parts = []
+        for w, b in zip(self.weights, self.biases):
+            # w: (num_envs, in, out) -> flatten last two dims
+            parts.append(w.reshape(self.num_envs, -1))
+            parts.append(b)                     # (num_envs, out)
+        return np.concatenate(parts, axis=1)
 
+    def set_genomes(self, genomes: np.ndarray):
+        """Assign from (num_envs, total_params) array."""
+        start = 0
+        for i, (w, b) in enumerate(zip(self.weights, self.biases)):
+            w_size = w.shape[1] * w.shape[2]
+            b_size = b.shape[1]
+
+            # Weight matrix
+            w_flat = genomes[:, start:start + w_size]
+            self.weights[i] = w_flat.reshape(self.num_envs, w.shape[1], w.shape[2])
+            start += w_size
+
+            # Bias vector
+            self.biases[i] = genomes[:, start:start + b_size]
+            start += b_size
 
 # ---------------------------------------------------------------------------
 # Vectorized LIF Layer
@@ -234,28 +233,31 @@ class VectorLIFLayer:
         self.b = np.zeros((num_envs, n_out))
         self.V = np.zeros((num_envs, n_out))
 
+        self._total_params = n_in * n_out + n_out   # ← store for later slicing
+
     def reset_state(self):
         self.V.fill(0.0)
 
     def forward(self, x):
         # x shape: (num_envs, n_in)
         # Vectorized batch matrix multiplication for unique weights per env
-        z = np.einsum('bi,bij->bj', x, self.W) + self.b
+        # x: (num_envs, n_in)
+        z = (x[:, None, :] @ self.W).squeeze(1) + self.b
         self.V = self.leak * self.V + z
-        
         spikes = (self.V >= self.threshold).astype(np.float32)
-        self.V[spikes == 1.0] = 0.0  # Reset fired neurons
+        self.V[spikes == 1.0] = 0.0
         return spikes
 
     def get_weights(self):
-        # Returns a list of flat arrays for the GA
-        return [np.concatenate([self.W[i].flatten(), self.b[i]]) for i in range(self.num_envs)]
+        """Return (num_envs, total_params) array."""
+        w_flat = self.W.reshape(self.num_envs, -1)          # (num_envs, n_in*n_out)
+        return np.concatenate([w_flat, self.b], axis=1)     # (num_envs, total_params)
 
-    def set_weights(self, flat_weights_list):
-        for i, weights in enumerate(flat_weights_list):
-            size_W = self.n_in * self.n_out
-            self.W[i] = weights[:size_W].reshape(self.n_in, self.n_out)
-            self.b[i] = weights[size_W:]
+    def set_weights(self, weights):
+        """Set from (num_envs, total_params) array."""
+        w_size = self.n_in * self.n_out
+        self.W = weights[:, :w_size].reshape(self.num_envs, self.n_in, self.n_out)
+        self.b = weights[:, w_size:]
 
 
 # ---------------------------------------------------------------------------
@@ -328,35 +330,29 @@ class VectorSpikingNetwork(NeuralNetwork):
         self.hidden_layer.reset_state()
         self.output_layer.reset_state()
 
-    def get_weights(self) -> np.ndarray:
-        """Get flat array of all trainable weights for a single agent (for compatibility)."""
-        # This returns weights for agent 0 - needed for NeuralNetwork interface
-        h_w = self.hidden_layer.get_weights()[0]
-        o_w = self.output_layer.get_weights()[0]
-        return np.concatenate([h_w, o_w])
-    
-    def set_weights(self, weights: np.ndarray):
-        """Set weights from flat array for a single agent (for compatibility)."""
-        # This sets all agents to the same weights
-        h_size = (self.hidden_layer.n_in * self.hidden_layer.n_out) + self.hidden_layer.n_out
-        h_weights = weights[:h_size]
-        o_weights = weights[h_size:]
-        
-        # Set all agents to the same weights
-        self.hidden_layer.set_weights([h_weights] * self.num_envs)
-        self.output_layer.set_weights([o_weights] * self.num_envs)
-    
     def get_genomes(self):
-        h_w = self.hidden_layer.get_weights()
-        o_w = self.output_layer.get_weights()
-        return [np.concatenate([h, o]) for h, o in zip(h_w, o_w)]
+        """Return (num_envs, total_params) array."""
+        h_weights = self.hidden_layer.get_weights()   # (num_envs, h_params)
+        o_weights = self.output_layer.get_weights()   # (num_envs, o_params)
+        return np.concatenate([h_weights, o_weights], axis=1)
 
     def set_genomes(self, genomes):
-        h_size = (self.hidden_layer.n_in * self.hidden_layer.n_out) + self.hidden_layer.n_out
-        h_weights = [g[:h_size] for g in genomes]
-        o_weights = [g[h_size:] for g in genomes]
+        """Set from (num_envs, total_params) array."""
+        h_size = self.hidden_layer._total_params
+        h_weights = genomes[:, :h_size]
+        o_weights = genomes[:, h_size:]
         self.hidden_layer.set_weights(h_weights)
         self.output_layer.set_weights(o_weights)
+    
+    # Keep old get_weights/set_weights for compatibility if needed
+    def get_weights(self) -> np.ndarray:
+        """Return flat weights for agent 0 (backward compatible)."""
+        return self.get_genomes()[0]
+
+    def set_weights(self, weights: np.ndarray):
+        """Set all agents to the same weights (backward compatible)."""
+        genomes = np.tile(weights, (self.num_envs, 1))
+        self.set_genomes(genomes)
 
 
 # ---------------------------------------------------------------------------
@@ -600,14 +596,21 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
             break
         
         # Reproduction: random selection
-        new_genomes = []
-        while len(new_genomes) < strategy_params['population_size']:
-            parent_idx = np.random.choice(survivor_indices)
-            child_genome = pop_brain.get_genomes()[parent_idx].copy()
-            mask = np.random.random(len(child_genome)) < strategy_params['mutation_rate']
-            child_genome[mask] += np.random.randn(np.sum(mask)) * strategy_params['mutation_mag']
-            new_genomes.append(child_genome)
-        pop_brain.set_genomes(new_genomes)
+        if len(survivor_indices) > 0:
+            # Get genomes of survivors as a 2D array
+            survivor_genomes = pop_brain.get_genomes()[survivor_indices]  # (n_survivors, total_params)
+
+            # Select parents with replacement
+            parent_idx = np.random.choice(len(survivor_indices), size=strategy_params['population_size'], replace=True)
+            child_genomes = survivor_genomes[parent_idx].copy()
+
+            # Vectorised mutation
+            mutation_mask = np.random.random(child_genomes.shape) < strategy_params['mutation_rate']
+            noise = np.random.randn(*child_genomes.shape) * strategy_params['mutation_mag']
+            child_genomes[mutation_mask] += noise[mutation_mask]
+
+            # Assign back to the population
+            pop_brain.set_genomes(child_genomes)
     
     env.close()
 
