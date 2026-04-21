@@ -105,10 +105,8 @@ class VectorRobotExplorationEnv:
         self.strategy_name = strategy_name
         self.strategy_parameters = strategy_parameters or {}
 
-        # Output Setup
-        timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-        base_output_dir = output_dir if output_dir is not None else "output"
-        self.output_dir = os.path.join(base_output_dir, f"{timestamp}_{strategy_name}")
+        # Output Setup – now output_dir is exactly the trial directory
+        self.output_dir = output_dir if output_dir is not None else "output"
         os.makedirs(self.output_dir, exist_ok=True)
         
         self.use_lut = use_lut

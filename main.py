@@ -3,6 +3,8 @@ import os
 import sys
 import time
 import numpy as np
+from datetime import datetime
+import json
 from env import VectorRobotExplorationEnv
 
 IMAGES_DIR = "environments/images"
@@ -25,22 +27,28 @@ def load_strategy(name,
                   ga_curriculum_consecutive_gens=3,
                   ga_curriculum_distance_increment=5.0, 
                   action_space="discrete",
-                  action_distribution="deterministic"
-                  ):
+                  action_distribution="deterministic",
+                  parallel_trials=False):
     """Load strategy class based on name."""
+    # Normalize strategy names
+    if name == "spiking":
+        name = "nn_spiking"
+    elif name == "random_nn":
+        name = "nn_random"
+    
     if name == "random":
         from strategies.random import RandomWalkStrategy
-        return RandomWalkStrategy(num_trials=num_trials, max_generations=num_generations)
+        return RandomWalkStrategy(num_trials=num_trials, max_generations=num_generations, parallel_trials=parallel_trials)
 
     if name == "levy":
         from strategies.levy import LevyWalkStrategy
         return LevyWalkStrategy(alpha=1.6, min_step=1.0, max_step=200.0, 
-                                num_trials=num_trials, max_generations=num_generations)
+                                num_trials=num_trials, max_generations=num_generations, parallel_trials=parallel_trials)
 
     if name == "levy_custom":
         from strategies.levy import LevyWalkStrategy
         return LevyWalkStrategy(alpha=alpha, min_step=min_step, max_step=max_step,
-                                num_trials=num_trials, max_generations=num_generations)
+                                num_trials=num_trials, max_generations=num_generations, parallel_trials=parallel_trials)
 
     if name == "manual":
         from strategies.manual import ManualControlStrategy
@@ -49,9 +57,9 @@ def load_strategy(name,
     if name == "uniform":
         from strategies.uniform import UniformRunLengthStrategy
         return UniformRunLengthStrategy(min_step=1, max_step=10,
-                                        num_trials=num_trials, max_generations=num_generations)
+                                        num_trials=num_trials, max_generations=num_generations, parallel_trials=parallel_trials)
 
-    if name == "spiking":
+    if name == "nn_spiking":
         from strategies.nn import NNStrategy
         return NNStrategy(
             population_size=population_size,
@@ -62,10 +70,11 @@ def load_strategy(name,
             network_type="spiking",
             action_space=action_space,  
             action_distribution=action_distribution, 
-            strategy_name="nn_spiking" 
+            strategy_name="nn_spiking",
+            parallel_trials=parallel_trials
         )
 
-    if name == "random_nn":
+    if name == "nn_random":
         from strategies.nn import NNStrategy
         return NNStrategy(
             population_size=population_size,
@@ -80,7 +89,8 @@ def load_strategy(name,
             curriculum_distance_increment=ga_curriculum_distance_increment,
             action_space=action_space, 
             action_distribution=action_distribution, 
-            strategy_name="nn_random"
+            strategy_name="nn_random",
+            parallel_trials=parallel_trials
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -91,7 +101,7 @@ def parse_args():
                         choices=["random", "levy", "levy_custom", "uniform", "manual", "spiking", "random_nn"],
                         help="Exploration strategy")
     parser.add_argument("--max_steps", type=int, default=1000)
-    parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")  # Changed default to 10, removed num_envs
+    parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--env", type=str, default="6.png")
     parser.add_argument("--use_lut", action="store_true")
@@ -102,7 +112,7 @@ def parse_args():
     )
 
     # New Evolutionary/Trial Arguments
-    parser.add_argument("--trials", type=int, default=20, help="Number of independent trials") 
+    parser.add_argument("--trials", type=int, default=1, help="Number of independent trials") 
     parser.add_argument("--generations", type=int, default=50, help="Generations per trial") 
 
     # Custom Lévy walk parameters
@@ -164,7 +174,9 @@ def parse_args():
         
     parser.add_argument("--output_dir", type=str, default=None,
                         help="Base output directory (default: './output')")
-
+    
+    parser.add_argument("--parallel", action="store_true",
+                        help="Run trials in parallel using multiprocessing")
 
     return parser.parse_args()
 
@@ -176,6 +188,43 @@ def main():
         args.population = 1  # Force single robot for manual
         args.render = True
         print("Manual control mode - using 1 environment")
+    
+    # Create overall output directory
+    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    base_output_dir = args.output_dir if args.output_dir is not None else "output"
+    run_dir = os.path.join(base_output_dir, f"{timestamp}_{args.strategy}")
+    os.makedirs(run_dir, exist_ok=True)
+    
+    # Save top-level metadata
+    overall_metadata = {
+        "run_datetime": datetime.now().isoformat(),
+        "strategy": args.strategy,
+        "num_trials": args.trials,
+        "generations_per_trial": args.generations,
+        "population_size": args.population,
+        "max_steps": args.max_steps,
+        "map": args.env,
+        "use_lut": args.use_lut,
+        "continue_after_goal": args.continue_after_goal,
+        "parallel_trials": args.parallel,
+        "command_line_args": vars(args)
+    }
+    with open(os.path.join(run_dir, "metadata.json"), 'w') as f:
+        json.dump(overall_metadata, f, indent=4)
+    
+    # Environment parameters (picklable)
+    env_params = {
+        "map_image_path": get_map_path(args.env),
+        "num_envs": args.population,
+        "robot_radius": 3,
+        "render": args.render,
+        "max_steps": args.max_steps,
+        "strategy_name": args.strategy,
+        "use_lut": args.use_lut,
+        "continue_after_goal": args.continue_after_goal,
+        "verbose": args.verbose
+        # Note: output_dir will be added per trial inside worker
+    }
     
     # Load strategy
     strategy = load_strategy(
@@ -190,28 +239,14 @@ def main():
         ga_curriculum_enabled=args.ga_curriculum,
         ga_curriculum_success_threshold=args.ga_curriculum_success_threshold,
         ga_curriculum_consecutive_gens=args.ga_curriculum_consecutive_gens,
-        ga_curriculum_distance_increment=args.ga_curriculum_distance_increment, 
+        ga_curriculum_distance_increment=args.ga_curriculum_distance_increment,
         action_space=args.action_space,
-        action_distribution=args.action_distribution 
-    )
-    
-    # Initialize Environment with population size
-    env = VectorRobotExplorationEnv(
-        map_image_path=get_map_path(args.env),
-        num_envs=args.population,  # Use population here
-        robot_radius=3,
-        render=args.render,
-        max_steps=args.max_steps,
-        strategy_name=strategy.name,
-        use_lut=args.use_lut,
-        continue_after_goal=args.continue_after_goal,
-        verbose=args.verbose, 
-        output_dir=args.output_dir
+        action_distribution=args.action_distribution,
+        parallel_trials=args.parallel
     )
     
     # Run
-    strategy.run(env)
-    env.close()
+    strategy.run(env_params, run_dir)
 
 if __name__ == "__main__":
     main()

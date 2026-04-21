@@ -18,13 +18,13 @@ class StrategyLoggingMixin:
     Supports multiple trials and generations per trial.
     """
     
-    def setup_trial_logging(self, env, strategy_name, trial_num, total_trials, max_generations=None):
+    def setup_trial_logging(self, env, trial_num, total_trials, max_generations=None):
         """
         Set up logging directories and files for a trial.
+        Assumes env.output_dir is already the trial directory (e.g., base_output_dir/trial_X).
         
         Args:
             env: The environment (has output_dir attribute)
-            strategy_name: Name of the strategy being run
             trial_num: Current trial number (1-indexed)
             total_trials: Total number of trials to run
             max_generations: Maximum generations per trial (if None, run until extinction)
@@ -34,13 +34,14 @@ class StrategyLoggingMixin:
         self.total_trials = total_trials
         self.max_generations = max_generations
         
-        self.trial_dir = os.path.join(env.output_dir, f"{strategy_name}_trial_{trial_num}")
+        # Use env.output_dir directly – it should already be the trial directory
+        self.trial_dir = env.output_dir
         os.makedirs(self.trial_dir, exist_ok=True)
         
         # Trial-level metadata
         self.trial_metadata = {
             "run_datetime": datetime.now().isoformat(),
-            "strategy_name": strategy_name,
+            "strategy_name": self.name,
             "trial_number": trial_num,
             "total_trials": total_trials,
             "max_generations": max_generations,
@@ -221,8 +222,7 @@ class StrategyLoggingMixin:
             "extinct": len(survivor_indices) == 0
         }
         
-        gen_stats_path = os.path.join(self.gen_dir, "log.json")
-        with open(gen_stats_path, 'w') as f:
+        with open(os.path.join(self.gen_dir, "log.json"), 'w') as f:
             json.dump(gen_stats, f, indent=2)
         
         # Append to trial summary CSV
@@ -279,14 +279,11 @@ class StrategyLoggingMixin:
             trial_summary["avg_success_energy"] = float(np.mean(energies))
             trial_summary["avg_success_health"] = float(np.mean(healths))
         
-        # Save trial summary
-        trial_summary_path = os.path.join(self.trial_dir, "trial_complete.json")
-        with open(trial_summary_path, 'w') as f:
+        with open(os.path.join(self.trial_dir, "trial_complete.json"), 'w') as f:
             json.dump(trial_summary, f, indent=4)
         
         # Human-readable trial summary
-        trial_text_path = os.path.join(self.trial_dir, "trial_summary.txt")
-        with open(trial_text_path, 'w') as f:
+        with open(os.path.join(self.trial_dir, "trial_summary.txt"), 'w') as f:
             f.write(f"=== Trial {self.trial_num}/{self.total_trials} Summary ===\n")
             f.write(f"Strategy: {self.trial_metadata['strategy_name']}\n")
             f.write(f"Duration: {trial_duration:.2f} seconds\n")

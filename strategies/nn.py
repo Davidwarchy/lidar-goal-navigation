@@ -404,47 +404,11 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
 # ---------------------------------------------------------------------------
 
 def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
-    """
-    Run one complete trial (all generations) in a separate process.
-    
-    Parameters:
-    -----------
-    trial_idx : int
-        1-indexed trial number
-    strategy_params : dict
-        All parameters needed to recreate the NNStrategy behavior:
-        - population_size, max_gens, mutation_rate, mutation_mag, max_samples_per_gen
-        - network_type, network_params, save_top_k
-        - curriculum_enabled, curriculum_success_threshold, curriculum_consecutive_gens, curriculum_distance_increment
-        - action_space, action_distribution
-    env_params : dict
-        Parameters to recreate the environment:
-        - env_class : the class of the environment (picklable)
-        - num_rays, ray_length, linear_speed, angular_speed, max_steps, goal_spawn_dist
-        - render : boolean (if present)
-        - other_kwargs : any additional keyword arguments
-    base_output_dir : str
-        Base output directory (e.g., env.output_dir). Each trial will create its own subdirectory.
-    """
-    # Recreate environment
-    env_class = env_params['env_class']
-    map_path = env_params['map_image_path'] 
-    env_kwargs = {
-        'num_envs': strategy_params['population_size'],
-        'num_rays': env_params['num_rays'],
-        'ray_length': env_params['ray_length'],
-        'linear_speed': env_params['linear_speed'],
-        'angular_speed': env_params['angular_speed'],
-        'max_steps': env_params['max_steps'],
-        'goal_spawn_dist': env_params['goal_spawn_dist'],
-        'output_dir': os.path.join(base_output_dir, f"trial_{trial_idx}"),
-        **env_params.get('other_kwargs', {})
-    }
-    env = env_class(map_path, **env_kwargs)
-    
-    # Set up trial directory
     trial_dir = os.path.join(base_output_dir, f"trial_{trial_idx}")
-    os.makedirs(trial_dir, exist_ok=True)
+    env_params_with_out = env_params.copy()
+    env_params_with_out["output_dir"] = trial_dir
+    from env import VectorRobotExplorationEnv   # local import to avoid circular issues
+    env = VectorRobotExplorationEnv(**env_params_with_out)
     
     # Create population using factory
     pop_brain = create_vector_neural_network(
@@ -456,14 +420,11 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
     )
     
     curriculum_streak = 0
-    
-    # Generation loop
     gen_pbar = tqdm(range(1, strategy_params['max_gens'] + 1),
                     desc=f"Trial {trial_idx}/{strategy_params['num_trials']}",
                     unit="gen", position=0)
     
     for gen in gen_pbar:
-        # Create generation directory
         gen_dir = os.path.join(trial_dir, f"gen_{gen}")
         os.makedirs(gen_dir, exist_ok=True)
         
@@ -473,11 +434,9 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         
         obs = env.reset()
         
-        # Store initial positions, reward positions, and initial energy/health for each individual
         initial_poses = [(env.robot_x[i], env.robot_y[i]) for i in range(strategy_params['population_size'])]
         reward_positions = [(env.goal_x[i], env.goal_y[i]) for i in range(strategy_params['population_size'])]
         
-        # Calculate initial distances to reward for each individual
         initial_distances = []
         for i in range(strategy_params['population_size']):
             dx = initial_poses[i][0] - reward_positions[i][0]
@@ -489,30 +448,27 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         gen_start_time = time.time()
         steps = 0
         
-        # Track which individuals have reached the goal
         reached_goal = np.zeros(strategy_params['population_size'], dtype=bool)
         success_steps = np.full(strategy_params['population_size'], -1, dtype=int)
         success_energy = np.full(strategy_params['population_size'], -1, dtype=float)
         success_health = np.full(strategy_params['population_size'], -1, dtype=float)
         
-        # Step-level logging
         step_csv_path = os.path.join(gen_dir, "log.csv")
         with open(step_csv_path, 'w', newline='') as step_f:
             step_writer = csv.writer(step_f)
             step_writer.writerow(["step", "percent_done", "new_successes"])
             
             while True:
-                # Parallel inference and step
                 output = pop_brain.forward(obs / env.ray_length)
-
+                
                 if strategy_params['action_space'] == "discrete":
                     if strategy_params['action_distribution'] == "deterministic":
                         actions = np.argmax(output, axis=1)
-                    else:  # stochastic
+                    else:
                         exp_output = np.exp(output - np.max(output, axis=1, keepdims=True))
                         probs = exp_output / np.sum(exp_output, axis=1, keepdims=True)
                         actions = np.array([np.random.choice(4, p=probs[i]) for i in range(len(probs))])
-                else:  # continuous
+                else:
                     linear_vel = output[:, 0]
                     angular_vel = output[:, 1]
                     linear_vel = np.clip(linear_vel, -1, 1) * env.linear_speed
@@ -523,15 +479,12 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
                         actions += np.random.randn(*actions.shape) * noise_scale
                         actions[:, 0] = np.clip(actions[:, 0], -env.linear_speed, env.linear_speed)
                         actions[:, 1] = np.clip(actions[:, 1], -90, 90)
-
-                obs, rewards, dones, info = env.step(actions, action_space=strategy_params['action_space'])
                 
+                obs, rewards, dones, info = env.step(actions, action_space=strategy_params['action_space'])
                 steps += 1
                 
-                # Track newly reached goals
                 new_successes = info["goal_reached"] & ~reached_goal
                 new_success_indices = np.where(new_successes)[0]
-                
                 for idx in new_success_indices:
                     reached_goal[idx] = True
                     success_steps[idx] = steps
@@ -542,12 +495,8 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
                 step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
                 step_f.flush()
                 
-                # Update progress every 10 steps to reduce overhead
                 if steps % 10 == 0:
-                    gen_pbar.set_postfix({
-                        "Step": steps,
-                        "%Done": f"{percent_done:.1f}%"
-                    })
+                    gen_pbar.set_postfix({"Step": steps, "%Done": f"{percent_done:.1f}%"})
                 
                 if env.render_flag:
                     env.render()
@@ -555,44 +504,29 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
                 if np.all(dones):
                     break
         
-        # End-of-generation processing
         gen_duration = time.time() - gen_start_time
         survivor_indices = np.where(reached_goal)[0]
         success_rate = (len(survivor_indices) / strategy_params['population_size']) * 100
-
+        
         curriculum_promoted = False
-
-        curriculum_active = (
-            strategy_params['network_type'] == "feedforward"
-            and strategy_params['curriculum_enabled']
-        )
+        curriculum_active = (strategy_params['network_type'] == "feedforward" and strategy_params['curriculum_enabled'])
         if curriculum_active:
             if success_rate >= (strategy_params['curriculum_success_threshold'] * 100.0):
                 curriculum_streak += 1
             else:
                 curriculum_streak = 0
-
             if curriculum_streak >= strategy_params['curriculum_consecutive_gens']:
                 env.goal_spawn_dist += strategy_params['curriculum_distance_increment']
                 curriculum_streak = 0
                 curriculum_promoted = True
-                gen_pbar.write(
-                    "[CURRICULUM] "
-                    f"Trial {trial_idx} Gen {gen}: "
-                    f"goal_spawn_dist -> {env.goal_spawn_dist:.2f}"
-                )
-
-        # Save random survivors (no metric-based sorting)
+                gen_pbar.write(f"[CURRICULUM] Trial {trial_idx} Gen {gen}: goal_spawn_dist -> {env.goal_spawn_dist:.2f}")
+        
         if strategy_params['save_top_k'] > 0 and len(survivor_indices) > 0:
-            # Randomly select survivors to save (no ranking, no sorting)
             survivors_list = list(survivor_indices)
-            random.shuffle(survivors_list)  # Randomize order
-            
+            random.shuffle(survivors_list)
             top_k = min(strategy_params['save_top_k'], len(survivors_list))
             genomes = pop_brain.get_genomes()
-            
             for idx in survivors_list[:top_k]:
-                # Use timestamp or random ID to avoid filename collisions
                 weight_path = os.path.join(top_k_dir, f"ind_{idx}.json")
                 weight_data = {
                     "individual_id": int(idx),
@@ -609,13 +543,11 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
                 with open(weight_path, 'w') as wf:
                     json.dump(weight_data, wf, indent=2)
         
-        # Calculate generation statistics
         path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
         energies = [success_energy[idx] for idx in survivor_indices if success_energy[idx] > 0]
         healths = [success_health[idx] for idx in survivor_indices if success_health[idx] > 0]
         initial_dists = [initial_distances[idx] for idx in survivor_indices]
         
-        # Generate log.json
         gen_stats = {
             "generation": gen,
             "trial": trial_idx,
@@ -635,18 +567,12 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
             "curriculum_streak": int(curriculum_streak if curriculum_active else 0),
             "curriculum_promoted": bool(curriculum_promoted)
         }
-        
         gen_stats_path = os.path.join(gen_dir, "log.json")
         with open(gen_stats_path, 'w') as wf:
             json.dump(gen_stats, wf, indent=2)
         
-        gen_pbar.set_postfix({
-            "Success": f"{success_rate:.1f}%",
-            "Total_Steps": steps,
-            "Sec/Gen": f"{gen_duration:.1f}s"
-        })
+        gen_pbar.set_postfix({"Success": f"{success_rate:.1f}%", "Total_Steps": steps, "Sec/Gen": f"{gen_duration:.1f}s"})
         
-        # Trial summary CSV
         trial_summary_path = os.path.join(trial_dir, "summary.csv")
         file_exists = os.path.exists(trial_summary_path)
         with open(trial_summary_path, 'a', newline='') as sf:
@@ -673,21 +599,17 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
             gen_pbar.write(f"[EXTINCT] Trial {trial_idx} Gen {gen} - No survivors.")
             break
         
-        # REPRODUCTION: Random selection (no elitism, no fitness sorting)
+        # Reproduction: random selection
         new_genomes = []
         while len(new_genomes) < strategy_params['population_size']:
-            parent_idx = np.random.choice(survivor_indices)  # Random, not sorted by anything
+            parent_idx = np.random.choice(survivor_indices)
             child_genome = pop_brain.get_genomes()[parent_idx].copy()
-            
-            # Mutate
             mask = np.random.random(len(child_genome)) < strategy_params['mutation_rate']
             child_genome[mask] += np.random.randn(np.sum(mask)) * strategy_params['mutation_mag']
             new_genomes.append(child_genome)
-        
         pop_brain.set_genomes(new_genomes)
     
     env.close()
-
 
 # ---------------------------------------------------------------------------
 # Neuroevolution Strategy with Extinction Logic (Vectorized)
@@ -702,40 +624,11 @@ class NNStrategy(BaseStrategy):
                 curriculum_success_threshold=0.05,
                 curriculum_consecutive_gens=3,
                 curriculum_distance_increment=5.0,
-                action_space="discrete",  # Add this parameter
-                action_distribution="deterministic",  # Add this parameter
-                strategy_name="nn",
-                parallel_trials=True,
+                action_space="discrete",
+                action_distribution="deterministic",
+                strategy_name="nn",   # this will be overridden in load_strategy
+                parallel_trials=False,
                 **network_params):
-        """
-        Parameters:
-        -----------
-        population_size : int
-            Number of agents per generation (also used as num_envs)
-        generations : int
-            Maximum number of generations
-        num_trials : int
-            Number of independent trials to run
-        mutation_rate : float
-            Probability of mutating each weight
-        mutation_mag : float
-            Standard deviation of Gaussian mutation noise
-        max_samples_per_gen : int
-            Maximum number of successful individuals to save per generation
-        network_type : str
-            Type of neural network to use ("spiking" or "feedforward")
-        save_top_k : int
-            Number of top individuals to save per generation (0 = don't save weights)
-        action_space : str
-            "discrete" (4 actions: up/down/left/right) or "continuous" (linear/angular velocity)
-        action_distribution : str
-            "deterministic" (argmax) or "stochastic" (sample from softmax)
-        parallel_trials : bool
-            If True, run trials concurrently using multiprocessing. If False (default), run sequentially.
-        **network_params : additional parameters passed to network factory
-            For spiking: hidden_size, n_steps
-            For feedforward: hidden_sizes
-        """
         params = {
             "pop_size": population_size,
             "generations": generations,
@@ -750,11 +643,10 @@ class NNStrategy(BaseStrategy):
             "curriculum_success_threshold": curriculum_success_threshold,
             "curriculum_consecutive_gens": curriculum_consecutive_gens,
             "curriculum_distance_increment": curriculum_distance_increment,
-            "action_space": action_space,  # ADD THIS
-            "action_distribution": action_distribution,  # ADD THIS
-            "parallel_trials": parallel_trials  # NEW
+            "action_space": action_space,
+            "action_distribution": action_distribution,
         }
-        super().__init__(strategy_name, params)
+        super().__init__(strategy_name, params, parallel_trials=parallel_trials)
         self.pop_size = population_size
         self.max_gens = generations
         self.num_trials = num_trials
@@ -768,271 +660,11 @@ class NNStrategy(BaseStrategy):
         self.curriculum_success_threshold = curriculum_success_threshold
         self.curriculum_consecutive_gens = max(1, curriculum_consecutive_gens)
         self.curriculum_distance_increment = curriculum_distance_increment
-
         self.action_space = action_space
         self.action_distribution = action_distribution
-        self.parallel_trials = parallel_trials  # NEW
-        # Store speed limits for continuous actions (will be set when env is available)
-        self.linear_speed = None
-        self.angular_speed = None
 
-    def run(self, env):
-        """Encapsulated trial and generation loop for vectorized SNN with progress tracking"""
-        
-        # -------------------------------------------------------------------
-        # SEQUENTIAL MODE (original code, unchanged except for indentation)
-        # -------------------------------------------------------------------
-        if not self.parallel_trials:
-            # Ensure environment matches population size
-            if env.num_envs != self.pop_size:
-                raise ValueError(f"Environment has {env.num_envs} agents but strategy expects {self.pop_size}. "
-                            f"Run with --population {env.num_envs} to match.")
-            
-            # Set speed limits from environment
-            self.linear_speed = env.linear_speed
-            self.angular_speed = env.angular_speed
-            for trial in range(1, self.num_trials + 1):
-                curriculum_streak = 0
-                # Create trial directory
-                trial_dir = os.path.join(env.output_dir, f"trial_{trial}")
-                os.makedirs(trial_dir, exist_ok=True)
-                
-                # Create population using factory
-                pop_brain = create_vector_neural_network(
-                    self.network_type,
-                    self.pop_size,
-                    env.num_rays,
-                    4,  # 4 actions
-                    **self.network_params
-                )
-                
-                # 1. Trial-level progress bar
-                gen_pbar = tqdm(range(1, self.max_gens + 1), 
-                                desc=f"Trial {trial}/{self.num_trials}", 
-                                unit="gen", position=0)
-                
-                for gen in gen_pbar:
-                    # Create generation directory
-                    gen_dir = os.path.join(trial_dir, f"gen_{gen}")
-                    os.makedirs(gen_dir, exist_ok=True)
-                    
-                    # Create top_k directory (for saving best individuals)
-                    if self.save_top_k > 0:
-                        top_k_dir = os.path.join(gen_dir, "top_k")
-                        os.makedirs(top_k_dir, exist_ok=True)
-                    
-                    obs = env.reset()
-                    
-                    # Store initial positions, reward positions, and initial energy/health for each individual
-                    initial_poses = [(env.robot_x[i], env.robot_y[i]) for i in range(self.pop_size)]
-                    reward_positions = [(env.goal_x[i], env.goal_y[i]) for i in range(self.pop_size)]
-                    
-                    # Calculate initial distances to reward for each individual
-                    initial_distances = []
-                    for i in range(self.pop_size):
-                        dx = initial_poses[i][0] - reward_positions[i][0]
-                        dy = initial_poses[i][1] - reward_positions[i][1]
-                        initial_distances.append(np.sqrt(dx*dx + dy*dy))
-                    
-                    pop_brain.reset_state()
-                    
-                    gen_start_time = time.time()
-                    steps = 0
-                    
-                    # Track which individuals have reached the goal
-                    reached_goal = np.zeros(self.pop_size, dtype=bool)
-                    success_steps = np.full(self.pop_size, -1, dtype=int)
-                    success_energy = np.full(self.pop_size, -1, dtype=float)
-                    success_health = np.full(self.pop_size, -1, dtype=float)
-                    
-                    # Step-level logging
-                    step_csv_path = os.path.join(gen_dir, "log.csv")
-                    with open(step_csv_path, 'w', newline='') as step_f:
-                        step_writer = csv.writer(step_f)
-                        step_writer.writerow(["step", "percent_done", "new_successes"])
-                        
-                        while True:
-                            # Parallel inference and step
-                            output = pop_brain.forward(obs / env.ray_length)
-
-                            if self.action_space == "discrete":
-                                actions = self._get_discrete_action(output)
-                            else:  # continuous
-                                actions = self._get_continuous_action(output)
-
-                            obs, rewards, dones, info = env.step(actions, action_space=self.action_space)
-                            
-                            steps += 1
-                            
-                            # Track newly reached goals
-                            new_successes = info["goal_reached"] & ~reached_goal
-                            new_success_indices = np.where(new_successes)[0]
-                            
-                            for idx in new_success_indices:
-                                reached_goal[idx] = True
-                                success_steps[idx] = steps
-                                success_energy[idx] = env.energy[idx]
-                                success_health[idx] = env.health[idx]
-                            
-                            percent_done = (np.sum(reached_goal) / self.pop_size) * 100
-                            step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
-                            step_f.flush()
-                            
-                            # Update progress every 10 steps to reduce overhead
-                            if steps % 10 == 0:
-                                gen_pbar.set_postfix({
-                                    "Step": steps,
-                                    "%Done": f"{percent_done:.1f}%"
-                                })
-                            
-                            if env.render_flag:
-                                env.render()
-                            
-                            if np.all(dones):
-                                break
-                    
-                    # End-of-generation processing
-                    gen_duration = time.time() - gen_start_time
-                    survivor_indices = np.where(reached_goal)[0]
-                    success_rate = (len(survivor_indices) / self.pop_size) * 100
-
-                    curriculum_promoted = False
-
-                    curriculum_active = (
-                        self.network_type == "feedforward"
-                        and self.curriculum_enabled
-                    )
-                    if curriculum_active:
-                        if success_rate >= (self.curriculum_success_threshold * 100.0):
-                            curriculum_streak += 1
-                        else:
-                            curriculum_streak = 0
-
-                        if curriculum_streak >= self.curriculum_consecutive_gens:
-                            env.goal_spawn_dist += self.curriculum_distance_increment
-                            curriculum_streak = 0
-                            curriculum_promoted = True
-                            gen_pbar.write(
-                                "[CURRICULUM] "
-                                f"Trial {trial} Gen {gen}: "
-                                f"goal_spawn_dist -> {env.goal_spawn_dist:.2f}"
-                            )
-
-                    # Save random survivors (no metric-based sorting)
-                    if self.save_top_k > 0 and len(survivor_indices) > 0:
-                        # Randomly select survivors to save (no ranking, no sorting)
-                        survivors_list = list(survivor_indices)
-                        random.shuffle(survivors_list)  # Randomize order
-                        
-                        top_k = min(self.save_top_k, len(survivors_list))
-                        genomes = pop_brain.get_genomes()
-                        
-                        for idx in survivors_list[:top_k]:
-                            # Use timestamp or random ID to avoid filename collisions
-                            weight_path = os.path.join(top_k_dir, f"ind_{idx}.json")
-                            weight_data = {
-                                "individual_id": int(idx),
-                                "generation": gen,
-                                "trial": trial,
-                                "steps_to_success": int(success_steps[idx]),
-                                "energy_remaining": float(success_energy[idx]),
-                                "health_remaining": float(success_health[idx]),
-                                "initial_distance_to_reward": float(initial_distances[idx]),
-                                "initial_position": {"x": float(initial_poses[idx][0]), "y": float(initial_poses[idx][1])},
-                                "reward_position": {"x": float(reward_positions[idx][0]), "y": float(reward_positions[idx][1])},
-                                "weights": genomes[idx].tolist()
-                            }
-                            with open(weight_path, 'w') as wf:
-                                json.dump(weight_data, wf, indent=2)
-                    # Calculate generation statistics
-                    path_lengths = [success_steps[idx] for idx in survivor_indices if success_steps[idx] > 0]
-                    energies = [success_energy[idx] for idx in survivor_indices if success_energy[idx] > 0]
-                    healths = [success_health[idx] for idx in survivor_indices if success_health[idx] > 0]
-                    initial_dists = [initial_distances[idx] for idx in survivor_indices]
-                    
-                    # Generate log.json
-                    gen_stats = {
-                        "generation": gen,
-                        "trial": trial,
-                        "timestamp": datetime.now().isoformat(),
-                        "success_rate_percent": success_rate,
-                        "num_successful": len(survivor_indices),
-                        "population_size": self.pop_size,
-                        "avg_path_length": float(np.mean(path_lengths)) if path_lengths else 0,
-                        "avg_energy_remaining": float(np.mean(energies)) if energies else 0,
-                        "avg_health_remaining": float(np.mean(healths)) if healths else 0,
-                        "avg_initial_distance_to_reward": float(np.mean(initial_dists)) if initial_dists else 0,
-                        "generation_duration_seconds": gen_duration,
-                        "total_steps_in_gen": steps,
-                        "save_top_k": self.save_top_k,
-                        "top_k_saved": min(self.save_top_k, len(survivor_indices)) if self.save_top_k > 0 else 0,
-                        "goal_spawn_distance": float(env.goal_spawn_dist),
-                        "curriculum_streak": int(curriculum_streak if curriculum_active else 0),
-                        "curriculum_promoted": bool(curriculum_promoted)
-                    }
-                    
-                    gen_stats_path = os.path.join(gen_dir, "log.json")
-                    with open(gen_stats_path, 'w') as wf:
-                        json.dump(gen_stats, wf, indent=2)
-                    
-                    gen_pbar.set_postfix({
-                        "Success": f"{success_rate:.1f}%",
-                        "Total_Steps": steps,
-                        "Sec/Gen": f"{gen_duration:.1f}s"
-                    })
-                    
-                    # Trial summary CSV
-                    trial_summary_path = os.path.join(trial_dir, "summary.csv")
-                    file_exists = os.path.exists(trial_summary_path)
-                    with open(trial_summary_path, 'a', newline='') as sf:
-                        writer = csv.writer(sf)
-                        if not file_exists:
-                            writer.writerow(["generation", "success_rate_percent", "num_successful", 
-                                            "avg_path_length", "avg_energy_remaining", 
-                                            "avg_health_remaining", "avg_initial_distance_to_reward",
-                                            "gen_duration_seconds", "total_steps_in_gen",
-                                            "goal_spawn_distance", "curriculum_streak", "curriculum_promoted"])
-                        writer.writerow([
-                            gen, f"{success_rate:.2f}%", len(survivor_indices),
-                            f"{np.mean(path_lengths) if path_lengths else 0:.2f}",
-                            f"{np.mean(energies) if energies else 0:.2f}",
-                            f"{np.mean(healths) if healths else 0:.2f}",
-                            f"{np.mean(initial_dists) if initial_dists else 0:.2f}",
-                            f"{gen_duration:.2f}", steps,
-                            f"{env.goal_spawn_dist:.2f}",
-                            curriculum_streak if curriculum_active else 0,
-                            "yes" if curriculum_promoted else "no"
-                        ])
-                    
-                    if len(survivor_indices) == 0:
-                        gen_pbar.write(f"[EXTINCT] Trial {trial} Gen {gen} - No survivors.")
-                        break
-                    
-                    # REPRODUCTION: Random selection (no elitism, no fitness sorting)
-                    new_genomes = self._reproduce(pop_brain.get_genomes(), survivor_indices)
-                    pop_brain.set_genomes(new_genomes)
-            return  # sequential mode done
-
-        # -------------------------------------------------------------------
-        # PARALLEL MODE (new)
-        # -------------------------------------------------------------------
-        # Extract environment creation parameters from the provided env instance
-        env_params = {
-            'env_class': type(env),
-            'map_image_path': env.map_image_path,   
-            'num_rays': env.num_rays,
-            'ray_length': env.ray_length,
-            'linear_speed': env.linear_speed,
-            'angular_speed': env.angular_speed,
-            'max_steps': env.max_steps,
-            'goal_spawn_dist': env.goal_spawn_dist,
-            'other_kwargs': {}
-        }
-        # Map render_flag to render (the environment expects 'render')
-        if hasattr(env, 'render_flag'):
-            env_params['other_kwargs']['render'] = env.render_flag
-        
-        # Gather all strategy parameters
+    def run(self, env_params, base_output_dir):
+        # Gather strategy parameters for helper
         strategy_params = {
             'population_size': self.pop_size,
             'max_gens': self.max_gens,
@@ -1051,88 +683,11 @@ class NNStrategy(BaseStrategy):
             'action_distribution': self.action_distribution
         }
         
-        base_output_dir = env.output_dir
-        
-        # Run trials in parallel using multiprocessing
-        with mp.Pool(processes=self.num_trials) as pool:
-            args_list = [(trial_idx + 1, strategy_params, env_params, base_output_dir)
-                         for trial_idx in range(self.num_trials)]
-            pool.starmap(_run_single_trial, args_list)
-
-    def _reproduce(self, all_genomes, survivor_indices):
-        """
-        Reproduction with RANDOM selection of survivors.
-        No elitism, no fitness-based sorting. All survivors have equal chance.
-        """
-        new_genomes = []
-        
-        # Randomly select survivors with replacement to fill population
-        # (Uniform probability - all survivors equally likely to be parents)
-        while len(new_genomes) < self.pop_size:
-            parent_idx = np.random.choice(survivor_indices)  # Random, not sorted by anything
-            child_genome = all_genomes[parent_idx].copy()
-            
-            # Mutate
-            mask = np.random.random(len(child_genome)) < self.mutation_rate
-            child_genome[mask] += np.random.randn(np.sum(mask)) * self.mutation_mag
-            new_genomes.append(child_genome)
-        
-        return new_genomes
-
-    # Add these methods to NNStrategy class
-
-    def _get_discrete_action(self, output):
-        """
-        Get discrete action from neural network output.
-        
-        Parameters:
-        -----------
-        output : (num_envs, output_size) array
-            Network output logits/probabilities
-        
-        Returns:
-        --------
-        actions : (num_envs,) array of integers in {0,1,2,3}
-        """
-        if self.action_distribution == "deterministic":
-            return np.argmax(output, axis=1)
-        else:  # stochastic
-            # Apply softmax to get probabilities
-            exp_output = np.exp(output - np.max(output, axis=1, keepdims=True))
-            probs = exp_output / np.sum(exp_output, axis=1, keepdims=True)
-            # Sample actions
-            actions = np.array([np.random.choice(4, p=probs[i]) for i in range(len(probs))])
-            return actions
-
-    def _get_continuous_action(self, output):
-        """
-        Get continuous action from neural network output.
-        
-        Parameters:
-        -----------
-        output : (num_envs, output_size) array
-            Network output - first 2 values used for linear and angular velocity
-        
-        Returns:
-        --------
-        actions : (num_envs, 2) array of [linear_velocity, angular_velocity]
-        """
-        # Extract linear and angular velocities
-        linear_vel = output[:, 0]
-        angular_vel = output[:, 1]
-        
-        # Normalize to reasonable ranges
-        linear_vel = np.clip(linear_vel, -1, 1) * self.linear_speed  # Scale to max linear speed
-        angular_vel = np.clip(angular_vel, -1, 1) * 90  # Scale to max 90 deg/s
-        
-        actions = np.stack([linear_vel, angular_vel], axis=1)
-        
-        if self.action_distribution == "stochastic":
-            # Add exploration noise
-            noise_scale = 0.1
-            actions += np.random.randn(*actions.shape) * noise_scale
-            # Re-clip after noise
-            actions[:, 0] = np.clip(actions[:, 0], -self.linear_speed, self.linear_speed)
-            actions[:, 1] = np.clip(actions[:, 1], -90, 90)
-        
-        return actions
+        if self.parallel_trials:
+            with mp.Pool(processes=self.num_trials) as pool:
+                args_list = [(trial_idx+1, strategy_params, env_params, base_output_dir)
+                            for trial_idx in range(self.num_trials)]
+                pool.starmap(_run_single_trial, args_list)
+        else:
+            for trial_idx in range(1, self.num_trials + 1):
+                _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir)

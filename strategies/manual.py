@@ -1,12 +1,19 @@
 import pygame
 import numpy as np
+import os
 from .base_strategy import BaseStrategy
+from env import VectorRobotExplorationEnv
 
 class ManualControlStrategy(BaseStrategy):
     def __init__(self):
-        super().__init__("manual_control", {})
+        super().__init__("manual", {}, parallel_trials=False)
     
-    def run(self, env):
+    def run(self, env_params, base_output_dir):
+        trial_dir = os.path.join(base_output_dir, "trial_1")
+        env_params_with_out = env_params.copy()
+        env_params_with_out["output_dir"] = trial_dir
+        env = VectorRobotExplorationEnv(**env_params_with_out)
+
         # Force single environment for manual control
         if env.num_envs != 1:
             print("Warning: Manual control only works with 1 environment. Forcing num_envs=1")
@@ -57,4 +64,5 @@ class ManualControlStrategy(BaseStrategy):
 
             env.clock.tick(env.fps)
 
+        env.close()
         return env.current_step, None
