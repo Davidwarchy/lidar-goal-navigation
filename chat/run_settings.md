@@ -4,8 +4,9 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 **OMEN**
 
 --- 
 ## Natural Selection 
-Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75
-Mutation magnitude - 
+- Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75
+- Mutation magnitude - 
+- Recombination - True, False 
 
 --- 
 ## Network architecture
@@ -29,6 +30,10 @@ Mutation magnitude -
 ## Noise 
 - Noise 
 - Determinism/Stochasticity 
+
+## Fitness Function 
+- No explicit fitness function 
+- Explicit fitness function (based on health, energy)
 
 # Standard 
 We want to have the following standard for the configuration tests 
