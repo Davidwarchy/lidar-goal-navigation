@@ -622,7 +622,7 @@ class NNStrategy(BaseStrategy):
     def __init__(self, population_size=50, generations=20, num_trials=3, 
                 mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
                 network_type="spiking",
-                save_top_k=5,
+                save_top_k=0,
                 curriculum_enabled=False,
                 curriculum_success_threshold=0.05,
                 curriculum_consecutive_gens=3,
