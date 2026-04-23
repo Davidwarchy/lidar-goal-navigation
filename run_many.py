@@ -26,7 +26,6 @@ GENERATIONS = 100
 POPULATION = 1000
 MAX_STEPS = 1000
 MAP = "6.png"
-USE_LUT = True
 CONTINUE_AFTER_GOAL = False  # Set to True if you want robots to continue after reaching goal
 
 def get_command(strategy, parallel=False):
@@ -41,10 +40,6 @@ def get_command(strategy, parallel=False):
         "--env", MAP,
         "--max_steps", str(MAX_STEPS),
     ]
-    
-    # Add LUT if enabled
-    if USE_LUT:
-        base_cmd.append("--use_lut")
     
     # Add continue_after_goal if enabled
     if CONTINUE_AFTER_GOAL:
@@ -94,7 +89,6 @@ def run_experiments(parallel=False):
         log.write(f"Generations per trial: {GENERATIONS}\n")
         log.write(f"Population size: {POPULATION}\n")
         log.write(f"Map: {MAP}\n")
-        log.write(f"Use LUT: {USE_LUT}\n")
         log.write(f"Continue after goal: {CONTINUE_AFTER_GOAL}\n")
         log.write(f"Parallel trials: {parallel}\n")
         log.write("="*80 + "\n\n")

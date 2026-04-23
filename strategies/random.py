@@ -1,3 +1,4 @@
+# strategies/random.py - Updated with device awareness
 import numpy as np
 import os
 import multiprocessing as mp
@@ -29,42 +30,55 @@ class RandomWalkStrategy(BaseStrategy, StrategyLoggingMixin):
         env = VectorRobotExplorationEnv(**env_params_with_out)
         
         self.setup_trial_logging(env, trial_num, self.num_trials, max_generations)
-        # ... rest of trial loop unchanged ...
+        
         generation = 1
         trial_extinct = False
+        
         # Run generations until extinction or max_generations
         while not trial_extinct:
             if max_generations and generation > max_generations:
                 break
+            
             # Setup generation logging
             self.setup_generation_logging(env, generation)
+            
             # Reset environment for this generation
             obs = env.reset()
             self._log_initial_agent_data(env)
+            
             # Track which agents have reached goal in this generation
             goal_reached = np.zeros(env.num_envs, dtype=bool)
+            
             # Run this generation
             while not np.all(env.done):
                 actions = np.random.randint(0, 4, size=env.num_envs)
                 obs, rewards, dones, info = env.step(actions, action_space="discrete")
+                
                 # Track newly reached goals
                 new_goals = info["goal_reached"] & ~goal_reached
                 goal_reached |= info["goal_reached"]
+                
                 # Log this step
                 active_mask = ~env.done
                 self._log_step(env.current_step, active_mask, new_goals, env)
+                
                 if env.render_flag:
                     env.render()
+                    
                 if env.verbose and env.current_step % 20 == 0:
                     active = np.sum(~env.done)
                     print(f"Trial {trial_num}, Gen {generation}, Step {env.current_step}, Active agents: {active}")
+            
             # Log generation completion
             has_survivors = self._log_generation_complete(env)
+            
             if not has_survivors:
                 trial_extinct = True
                 self.trial_extinct = True
+            
             generation += 1
-            # Log trial completion
+        
+        # Log trial completion
         self._log_trial_complete(env)
         env.close()
 

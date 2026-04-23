@@ -1,3 +1,4 @@
+# main.py - Updated with device argument
 import argparse
 import os
 import sys
@@ -28,7 +29,8 @@ def load_strategy(name,
                   ga_curriculum_distance_increment=5.0, 
                   action_space="discrete",
                   action_distribution="deterministic",
-                  parallel_trials=False):
+                  parallel_trials=False,
+                  device='cuda'):
     """Load strategy class based on name."""
     # Normalize strategy names
     if name == "spiking":
@@ -71,7 +73,8 @@ def load_strategy(name,
             action_space=action_space,  
             action_distribution=action_distribution, 
             strategy_name="nn_spiking",
-            parallel_trials=parallel_trials
+            parallel_trials=parallel_trials,
+            device=device
         )
 
     if name == "nn_random":
@@ -90,7 +93,8 @@ def load_strategy(name,
             action_space=action_space, 
             action_distribution=action_distribution, 
             strategy_name="nn_random",
-            parallel_trials=parallel_trials
+            parallel_trials=parallel_trials,
+            device=device
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -183,11 +187,22 @@ def parse_args():
     
     parser.add_argument("--parallel", action="store_true",
                         help="Run trials in parallel using multiprocessing")
+    
+    parser.add_argument("--device", type=str, default="cuda",
+                        choices=["cuda", "cpu"],
+                        help="Device to run on (cuda or cpu)")
 
     return parser.parse_args()
 
 def main():
     args = parse_args()
+    
+    # Check CUDA availability
+    if args.device == "cuda" and not torch.cuda.is_available():
+        print("Warning: CUDA not available, falling back to CPU")
+        args.device = "cpu"
+    
+    print(f"Using device: {args.device}")
     
     # Manual control override
     if args.strategy == "manual":
@@ -213,6 +228,7 @@ def main():
         "use_lut": args.use_lut,
         "continue_after_goal": args.continue_after_goal,
         "parallel_trials": args.parallel,
+        "device": args.device,
         "command_line_args": vars(args)
     }
     with open(os.path.join(run_dir, "metadata.json"), 'w') as f:
@@ -228,7 +244,8 @@ def main():
         "strategy_name": args.strategy,
         "use_lut": args.use_lut,
         "continue_after_goal": args.continue_after_goal,
-        "verbose": args.verbose
+        "verbose": args.verbose,
+        "device": args.device
         # Note: output_dir will be added per trial inside worker
     }
     
@@ -248,24 +265,26 @@ def main():
         ga_curriculum_distance_increment=args.ga_curriculum_distance_increment,
         action_space=args.action_space,
         action_distribution=args.action_distribution,
-        parallel_trials=args.parallel
+        parallel_trials=args.parallel,
+        device=args.device
     )
     
     # Run
     strategy.run(env_params, run_dir)
 
 if __name__ == "__main__":
+    import torch  # Import here to avoid circular imports
     main()
 
 # example commands
 # --- RANDOM WALK --- 
 # python main.py --strategy random --max_steps 1000 --population 10 --env 6.png
-# python main.py --strategy random --env 6.png --use_lut --max_steps 100000 --continue_after_goal --population 10
+# python main.py --strategy random --env 6.png --max_steps 100000 --continue_after_goal --population 10
 # --- SPIKING --- 
 # python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png
 #
 # --- PROFILING ---
-# python -m cProfile -s tottime main.py --strategy random --env 6.png --use_lut --max_steps 100_000 --continue_after_goal --population 10 > xprofile.txt
+# python -m cProfile -s tottime main.py --strategy random --env 6.png --max_steps 100_000 --continue_after_goal --population 10 > xprofile.txt
 # 
 # --- PARALLEL TRIALS ---
 # python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png

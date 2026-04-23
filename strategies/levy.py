@@ -1,3 +1,4 @@
+# strategies/levy.py - Updated with device awareness
 import numpy as np
 import os
 import multiprocessing as mp
@@ -107,7 +108,7 @@ class LevyWalkStrategy(BaseStrategy, StrategyLoggingMixin):
 
             generation += 1
         
-            # Log trial completion
+        # Log trial completion
         self._log_trial_complete(env)
         env.close()
 

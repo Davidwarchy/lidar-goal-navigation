@@ -63,7 +63,7 @@ Use `main.py` to launch experiments with specific environment configurations.
 
 ### Key Arguments
 * **`--env [file.png]`**: Specifies the map image from `environments/images/`. White pixels represent free space; black pixels are obstacles.
-* **`--use_lut`**: Enables the **Look-Up Table (LUT)**.
+* **`--no_lut`**: Disables the **Look-Up Table (LUT)**.
     * **Why use it?** Lidar ray marching is computationally expensive ($O(\text{envs} \times \text{rays} \times \text{length})$). A pre-generated LUT allows for $O(1)$ distance retrieval, significantly speeding up simulations with large populations.
 * **`--population [N]`**: Sets the number of parallel robots running in the vectorized environment.
 * **`--max_steps [N]`**: The maximum energy/time steps allowed per individual before they are marked as "done".
@@ -71,7 +71,7 @@ Use `main.py` to launch experiments with specific environment configurations.
 
 **Example Command:**
 ```bash
-python main.py --strategy random --env 6.png --population 10 --use_lut --render
+python main.py --strategy random --env 6.png --population 10 --render
 ```
 
 # Updated README: Robot Exploration
@@ -105,7 +105,7 @@ Use `main.py` to launch experiments with specific environment configurations.
 * **`--env [file.png]`**: Specifies the map image from `environments/images/`. 
     * **White** = free space.
     * **Black** = obstacles.
-* **`--use_lut`**: Enables the **Look-Up Table (LUT)**.
+* **`--no_lut`**: Disables the **Look-Up Table (LUT)**.
     * **Why use it?** Standard ray marching is computationally heavy at $O(\text{num\_envs} \times \text{num\_rays} \times \text{ray\_length})$. A pre-generated LUT allows for **$O(1)$ distance retrieval**, significantly speeding up simulations.
 * **`--render`**: Enables the visual display of the robots, lidar rays, and the environment using Pygame.
 * **`--max_steps [N]`**: The maximum energy/time steps allowed per individual (default: 1000).

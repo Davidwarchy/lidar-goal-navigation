@@ -1,4 +1,16 @@
+# env.py - Rewritten with PyTorch GPU support
+import torch
+import torch.nn.functional as F
 import sys
+import os
+import csv
+import random
+import cv2
+import json
+from datetime import datetime
+from math import cos, sin, radians, sqrt
+import warnings
+import numpy as np
 
 def _dep_error_message(missing_import: str) -> str:
     pyver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
@@ -17,20 +29,10 @@ try:
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(_dep_error_message("numpy")) from e
 
-import os
-import csv
-import random
-
 try:
     import cv2
 except ModuleNotFoundError as e:
     raise ModuleNotFoundError(_dep_error_message("opencv-python (import name: cv2)")) from e
-
-from datetime import datetime
-from math import cos, sin, radians, sqrt
-import json
-from collections import OrderedDict
-import warnings
 
 class VectorRobotExplorationEnv:
     def __init__(self,
@@ -47,10 +49,14 @@ class VectorRobotExplorationEnv:
                  use_lut=True,
                  continue_after_goal=False,
                  goal_spawn_dist=30.0,
-                 verbose=False):
+                 verbose=False,
+                 device='cuda'):
 
         self.num_envs = num_envs
         self.map_image_path = map_image_path
+        self.device = device if torch.cuda.is_available() and device == 'cuda' else 'cpu'
+        
+        # Load map
         self.map_image = cv2.imread(map_image_path, cv2.IMREAD_GRAYSCALE)
         if self.map_image is None:
             raise ValueError(f"Could not load map image from {map_image_path}")
@@ -64,10 +70,15 @@ class VectorRobotExplorationEnv:
 
         _, self.obstacle_map = cv2.threshold(self.map_image, 127, 1, cv2.THRESH_BINARY_INV)
         free_space_mask = (self.obstacle_map == 0).astype(np.uint8)
+        
         # The distanceTransform calculates the distance from every free pixel to the nearest obstacle.
         # Purpose: It tells us if the entire volume of the robot (defined by robot_radius) can fit at a specific $(x, y)$ coordinate without overlapping a wall
         # Efficiency: Without this, you would have to check every single pixel under the robot's circular footprint every time it moves. With distanceTransform, we only check one pixel: if distance_map[y, x] < robot_radius, we know a collision has occurred
-        self.distance_map = cv2.distanceTransform(free_space_mask, cv2.DIST_L2, 5) 
+        self.distance_map = cv2.distanceTransform(free_space_mask, cv2.DIST_L2, 5)
+        
+        # Convert to torch tensors on GPU
+        self.obstacle_map_tensor = torch.from_numpy(self.obstacle_map).float().to(self.device)
+        self.distance_map_tensor = torch.from_numpy(self.distance_map).float().to(self.device)
 
         self.map_height, self.map_width = self.map_image.shape
         self.scale = scale
@@ -86,22 +97,22 @@ class VectorRobotExplorationEnv:
         self.angular_speed = angular_speed
         self.robot_radius = robot_radius
 
-        # Vectorized State variables
-        self.robot_x = np.zeros(num_envs, dtype=np.float32)
-        self.robot_y = np.zeros(num_envs, dtype=np.float32)
-        self.robot_orientation = np.zeros(num_envs, dtype=np.float32)
-        self.energy = np.full(num_envs, max_steps, dtype=np.int32)
-        self.health = np.full(num_envs, 500, dtype=np.int32)
-        self.done = np.zeros(num_envs, dtype=bool)
+        # Vectorized State variables (on GPU)
+        self.robot_x = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self.robot_y = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self.robot_orientation = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self.energy = torch.full((num_envs,), max_steps, dtype=torch.int32, device=self.device)
+        self.health = torch.full((num_envs,), 500, dtype=torch.int32, device=self.device)
+        self.done = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
         self.current_step = 0
         
         # Survival/Goal parameters
-        self.goal_x = np.zeros(num_envs, dtype=np.float32)
-        self.goal_y = np.zeros(num_envs, dtype=np.float32)
+        self.goal_x = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
+        self.goal_y = torch.zeros(num_envs, dtype=torch.float32, device=self.device)
         self.goal_success_dist = 6.0 
         self.goal_spawn_dist = goal_spawn_dist
 
-        self.lidar_angles = np.linspace(-45, 45, self.num_rays)
+        self.lidar_angles = torch.linspace(-45, 45, self.num_rays, device=self.device)
         self.strategy_name = strategy_name
         self.strategy_parameters = strategy_parameters or {}
 
@@ -126,7 +137,8 @@ class VectorRobotExplorationEnv:
         base_name = os.path.splitext(os.path.basename(self.map_image_path))[0]
         lut_path = os.path.join("environments", "luts", f"{base_name}_360.npy")
         if os.path.exists(lut_path):
-            self.lidar_lut = np.load(lut_path, mmap_mode='r')
+            lut_np = np.load(lut_path, mmap_mode='r')
+            self.lidar_lut = torch.from_numpy(lut_np.copy()).to(self.device)
         else:
             self.use_lut = False
 
@@ -138,6 +150,7 @@ class VectorRobotExplorationEnv:
             "num_envs": self.num_envs,
             "max_steps": self.max_steps,
             "continue_after_goal": self.continue_after_goal,
+            "device": str(self.device),
             "environment_parameters": {
                 "grid_width": self.grid_width,
                 "grid_height": self.grid_height,
@@ -157,15 +170,18 @@ class VectorRobotExplorationEnv:
     def reset(self):
         center_x, center_y = self.map_width // 2, self.map_height // 2
         for i in range(self.num_envs):
-            self.robot_x[i], self.robot_y[i] = self._find_free_position(center_x, center_y)
-            gx, gy = self._spawn_reward(self.robot_x[i], self.robot_y[i], self.goal_spawn_dist)
-            self.goal_x[i], self.goal_y[i] = gx, gy
+            x, y = self._find_free_position(center_x, center_y)
+            self.robot_x[i] = x
+            self.robot_y[i] = y
+            gx, gy = self._spawn_reward(x, y, self.goal_spawn_dist)
+            self.goal_x[i] = gx
+            self.goal_y[i] = gy
             
-        self.robot_orientation.fill(0)
+        self.robot_orientation.zero_()
         self.current_step = 0
-        self.energy.fill(self.max_steps)
-        self.health.fill(500)
-        self.done.fill(False)
+        self.energy.fill_(self.max_steps)
+        self.health.fill_(500)
+        self.done.fill_(False)
 
         return self._get_observation()
 
@@ -173,12 +189,14 @@ class VectorRobotExplorationEnv:
         for radius in range(0, max_radius, 5):
             for angle in np.linspace(0, 2*np.pi, 36):
                 x, y = int(start_x + radius * np.cos(angle)), int(start_y + radius * np.sin(angle))
-                if self._is_position_free(x, y): return x, y
+                if self._is_position_free(x, y):
+                    return x, y
         return start_x, start_y
 
     def _is_position_free(self, x, y):
         ix, iy = int(x), int(y)
-        if not (0 <= ix < self.map_width and 0 <= iy < self.map_height): return False
+        if not (0 <= ix < self.map_width and 0 <= iy < self.map_height):
+            return False
         return self.distance_map[iy, ix] >= self.robot_radius
 
     def _spawn_reward(self, start_x, start_y, distance):
@@ -196,32 +214,41 @@ class VectorRobotExplorationEnv:
         
         Parameters:
         -----------
-        actions : array-like
-            For discrete: (num_envs,) array of integers in {0,1,2,3}
-            For continuous: (num_envs, 2) array of [linear_velocity, angular_velocity]
+        actions : tensor or array-like
+            For discrete: (num_envs,) tensor of integers in {0,1,2,3}
+            For continuous: (num_envs, 2) tensor of [linear_velocity, angular_velocity]
         action_space : str
             "discrete" or "continuous"
         """
+        # Convert actions to torch tensor on device if needed
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.tensor(actions, device=self.device)
+        
         # Only decrement health for robots that are still active (not done)
         active_mask = ~self.done
         
         if action_space == "discrete":
             # Vectorized action mapping for discrete actions
-            v_left = np.zeros(self.num_envs)
-            v_right = np.zeros(self.num_envs)
+            v_left = torch.zeros(self.num_envs, device=self.device)
+            v_right = torch.zeros(self.num_envs, device=self.device)
             
             # Up (action 0)
-            v_left[actions == 0] = v_right[actions == 0] = self.linear_speed
+            v_left[actions == 0] = self.linear_speed
+            v_right[actions == 0] = self.linear_speed
             # Down (action 1)
-            v_left[actions == 1] = v_right[actions == 1] = -self.linear_speed
+            v_left[actions == 1] = -self.linear_speed
+            v_right[actions == 1] = -self.linear_speed
             # Left (action 2)
-            v_left[actions == 2], v_right[actions == 2] = self.linear_speed/4, -self.linear_speed/4
+            left_mask = actions == 2
+            v_left[left_mask] = self.linear_speed / 4
+            v_right[left_mask] = -self.linear_speed / 4
             # Right (action 3)
-            v_left[actions == 3], v_right[actions == 3] = -self.linear_speed/4, self.linear_speed/4
+            right_mask = actions == 3
+            v_left[right_mask] = -self.linear_speed / 4
+            v_right[right_mask] = self.linear_speed / 4
             
         else:  # continuous action space
             # Actions shape: (num_envs, 2) - [linear_velocity, angular_velocity]
-            # Convert to wheel velocities
             linear_vel = actions[:, 0]
             angular_vel = actions[:, 1]  # degrees per second
             
@@ -230,24 +257,25 @@ class VectorRobotExplorationEnv:
         
         # Update positions
         self._update_robot_positions(v_left, v_right)
-        # 2. Get Perception
+        
+        # Get Perception
         obs = self._get_observation()
 
-        # 3. Check for Success (Goal reached)
+        # Check for Success (Goal reached)
         dx = self.robot_x - self.goal_x
         dy = self.robot_y - self.goal_y
         goal_reached = (dx*dx + dy*dy) <= self.goal_success_dist ** 2
         
-        # 4. Success handling
+        # Success handling
         # Reward is only for the step they actually find it
-        rewards = np.where(goal_reached & active_mask, 1.0, 0.0)
+        rewards = torch.where(goal_reached & active_mask, torch.tensor(1.0, device=self.device), torch.tensor(0.0, device=self.device))
 
-        # 5. Resource Depletion
+        # Resource Depletion
         # In 'Life on Silicon', every step costs 1 energy point 
         # We only decrement if they haven't finished yet
         self.energy[active_mask] -= 1
         
-        # 6. Final Termination Check
+        # Final Termination Check
         # If NOT continuing after goal, reaching it marks them as done immediately
         if not self.continue_after_goal:
             # Done if: No energy OR No health OR Reached Max Steps OR Reached Goal
@@ -258,25 +286,31 @@ class VectorRobotExplorationEnv:
             new_dones = (self.current_step >= self.max_steps)
 
         self.current_step += 1
-        self.done |= new_dones
+        self.done = self.done | new_dones
 
-        return obs, rewards, self.done.copy(), {"goal_reached": goal_reached}
+        # Convert rewards to CPU for return (if needed for non-GPU code)
+        rewards_cpu = rewards.cpu().numpy() if rewards.is_cuda else rewards.numpy()
+        done_cpu = self.done.cpu().numpy() if self.done.is_cuda else self.done.numpy()
+        
+        return obs, rewards_cpu, done_cpu, {"goal_reached": goal_reached.cpu().numpy() if goal_reached.is_cuda else goal_reached.numpy()}
 
     def _update_robot_positions(self, v_left, v_right):
         lin_vel = (v_left + v_right) / 2 * self.wheel_radius
-        ang_vel = np.degrees((v_right - v_left) / self.wheel_base * self.wheel_radius)
+        ang_vel = torch.degrees((v_right - v_left) / self.wheel_base * self.wheel_radius)
         
-        new_x = self.robot_x + lin_vel * np.cos(np.radians(self.robot_orientation)) * self.dt
-        new_y = self.robot_y + lin_vel * np.sin(np.radians(self.robot_orientation)) * self.dt
+        new_x = self.robot_x + lin_vel * torch.cos(torch.radians(self.robot_orientation)) * self.dt
+        new_y = self.robot_y + lin_vel * torch.sin(torch.radians(self.robot_orientation)) * self.dt
         new_orient = (self.robot_orientation + ang_vel * self.dt) % 360
         
         # Collision check for all robots
-        ixs, iys = new_x.astype(int), new_y.astype(int)
+        ixs = new_x.long()
+        iys = new_y.long()
         valid = (ixs >= 0) & (ixs < self.map_width) & (iys >= 0) & (iys < self.map_height)
         
         # Safe distance transform lookup
-        dist_vals = np.zeros(self.num_envs)
-        dist_vals[valid] = self.distance_map[iys[valid], ixs[valid]]
+        dist_vals = torch.zeros(self.num_envs, device=self.device)
+        valid_indices = torch.where(valid)
+        dist_vals[valid_indices] = self.distance_map_tensor[iys[valid_indices], ixs[valid_indices]]
         
         free_mask = dist_vals >= self.robot_radius
         
@@ -287,7 +321,8 @@ class VectorRobotExplorationEnv:
         self.robot_orientation[update_mask] = new_orient[update_mask]
         
         # Penalty for collision
-        self.health[~free_mask & ~self.done] -= 1
+        collision_mask = ~free_mask & ~self.done
+        self.health[collision_mask] -= 1
 
     def _get_observation(self):
         """
@@ -299,27 +334,26 @@ class VectorRobotExplorationEnv:
                 raise ValueError("use_lut is True but lidar_lut was not loaded. Check your paths.")
             
             # 1. Prepare indices (H, W)
-            ixs = np.round(self.robot_x).astype(int)
-            iys = np.round(self.robot_y).astype(int)
+            ixs = torch.round(self.robot_x).long()
+            iys = torch.round(self.robot_y).long()
             
             # Boundary clipping for safety
-            ixs = np.clip(ixs, 0, self.map_width - 1)
-            iys = np.clip(iys, 0, self.map_height - 1)
+            ixs = torch.clamp(ixs, 0, self.map_width - 1)
+            iys = torch.clamp(iys, 0, self.map_height - 1)
             
             # 2. Map world angles to LUT indices
             # Shape: (num_envs, num_rays)
             angles = (self.robot_orientation[:, None] + self.lidar_angles) % 360
-            angle_idxs = angles.astype(int)
+            angle_idxs = angles.long()
             
             # 3. Vectorized LUT retrieval
             # We use advanced indexing to pull distances for all robots at once
-            return self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
-
+            distances = self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
+            return distances.cpu().numpy() if distances.is_cuda else distances.numpy()
 
         # FALLBACK: Vectorized Ray Marching (if LUT is not used/available)
         # Raise warning if LUT was intended but not loaded
         if self.use_lut:
-            
             warnings.warn("use_lut is True but lidar_lut was not loaded. Falling back to vectorized ray marching.")
 
         return self._compute_vectorized_ray_marching()
@@ -329,41 +363,41 @@ class VectorRobotExplorationEnv:
         Computes LIDAR for all robots simultaneously without a LUT.
         Complexity: O(num_envs * num_rays * ray_length)
         """
-        # Create ray steps: shape (ray_length,)
-        steps = np.arange(self.ray_length)
+        # Create ray steps on GPU
+        steps = torch.arange(self.ray_length, device=self.device)
         
         # Absolute angles for every ray of every robot: (num_envs, num_rays)
-        angles_rad = np.radians(self.robot_orientation[:, None] + self.lidar_angles)
+        angles_rad = torch.radians(self.robot_orientation[:, None] + self.lidar_angles)
         
         # Unit vectors: (num_envs, num_rays, 1)
-        dx = np.cos(angles_rad)[:, :, None]
-        dy = np.sin(angles_rad)[:, :, None]
+        dx = torch.cos(angles_rad)[:, :, None]
+        dy = torch.sin(angles_rad)[:, :, None]
         
         # Compute all potential ray coordinates: (num_envs, num_rays, ray_length)
         # x_points = robot_x + dx * steps
-        ray_x = (self.robot_x[:, None, None] + dx * steps).astype(np.int32)
-        ray_y = (self.robot_y[:, None, None] + dy * steps).astype(np.int32)
+        ray_x = (self.robot_x[:, None, None] + dx * steps).long()
+        ray_y = (self.robot_y[:, None, None] + dy * steps).long()
         
         # Clip to map boundaries to avoid index errors
-        ray_x_clp = np.clip(ray_x, 0, self.map_width - 1)
-        ray_y_clp = np.clip(ray_y, 0, self.map_height - 1)
+        ray_x_clp = torch.clamp(ray_x, 0, self.map_width - 1)
+        ray_y_clp = torch.clamp(ray_y, 0, self.map_height - 1)
         
         # Check hits against the obstacle map
         # Resulting 'hits' shape: (num_envs, num_rays, ray_length)
-        hits = self.obstacle_map[ray_y_clp, ray_x_clp] == 1
+        hits = self.obstacle_map_tensor[ray_y_clp, ray_x_clp] == 1
         
         # Find the first hit along the 'ray_length' axis
         # argmax returns the first index of 'True'
-        hit_indices = np.argmax(hits, axis=2)
+        hit_indices = torch.argmax(hits.float(), dim=2)
         
         # Identify rays that never hit anything
-        no_hits = ~np.any(hits, axis=2)
+        no_hits = ~torch.any(hits, dim=2)
         
         # Final distances: use hit index or default to max ray_length
-        distances = hit_indices.astype(np.float32)
+        distances = hit_indices.float()
         distances[no_hits] = float(self.ray_length)
         
-        return distances
+        return distances.cpu().numpy() if distances.is_cuda else distances.numpy()
 
     def render(self):
         if not self.render_flag: return
@@ -380,11 +414,18 @@ class VectorRobotExplorationEnv:
         map_surf = self.pygame.surfarray.make_surface(np.transpose(np.stack([self.map_image]*3, axis=-1), (1,0,2)))
         self.screen.blit(self.pygame.transform.scale(map_surf, (self.window_width, self.window_height)), (0,0))
         
-        # Draw goals for all active robots
+        # Draw goals for all active robots (need CPU values for pygame)
+        robot_x_cpu = self.robot_x.cpu().numpy() if self.robot_x.is_cuda else self.robot_x.numpy()
+        robot_y_cpu = self.robot_y.cpu().numpy() if self.robot_y.is_cuda else self.robot_y.numpy()
+        goal_x_cpu = self.goal_x.cpu().numpy() if self.goal_x.is_cuda else self.goal_x.numpy()
+        goal_y_cpu = self.goal_y.cpu().numpy() if self.goal_y.is_cuda else self.goal_y.numpy()
+        done_cpu = self.done.cpu().numpy() if self.done.is_cuda else self.done.numpy()
+        robot_orient_cpu = self.robot_orientation.cpu().numpy() if self.robot_orientation.is_cuda else self.robot_orientation.numpy()
+        
         for i in range(self.num_envs):
-            if not self.done[i]:
-                goal_x = int(self.goal_x[i] * self.scale)
-                goal_y = int(self.goal_y[i] * self.scale)
+            if not done_cpu[i]:
+                goal_x = int(goal_x_cpu[i] * self.scale)
+                goal_y = int(goal_y_cpu[i] * self.scale)
                 radius = int(self.goal_success_dist * self.scale)
                 
                 # Outer ring (bright green)
@@ -396,9 +437,9 @@ class VectorRobotExplorationEnv:
         
         # Draw active robots
         for i in range(self.num_envs):
-            if not self.done[i]:
-                center_x = int(self.robot_x[i] * self.scale)
-                center_y = int(self.robot_y[i] * self.scale)
+            if not done_cpu[i]:
+                center_x = int(robot_x_cpu[i] * self.scale)
+                center_y = int(robot_y_cpu[i] * self.scale)
                 radius = int(self.robot_radius * self.scale)
                 
                 # Robot body
@@ -406,7 +447,7 @@ class VectorRobotExplorationEnv:
                 
                 # Heading direction (red line)
                 arrow_len = radius * 1.5
-                angle_rad = np.radians(self.robot_orientation[i])
+                angle_rad = np.radians(robot_orient_cpu[i])
                 end_x = int(center_x + arrow_len * np.cos(angle_rad))
                 end_y = int(center_y + arrow_len * np.sin(angle_rad))
                 self.pygame.draw.line(self.screen, (255, 0, 0), (center_x, center_y), (end_x, end_y), 2)
