@@ -1,4 +1,4 @@
-# env.py - Rewritten with PyTorch GPU support
+# env.py - Fixed version with correct PyTorch functions
 import torch
 import torch.nn.functional as F
 import sys
@@ -141,6 +141,7 @@ class VectorRobotExplorationEnv:
             self.lidar_lut = torch.from_numpy(lut_np.copy()).to(self.device)
         else:
             self.use_lut = False
+            print(f"Warning: LUT not found at {lut_path}, falling back to ray marching")
 
     def _save_metadata(self):
         """Save comprehensive run metadata for the vectorized session."""
@@ -296,10 +297,10 @@ class VectorRobotExplorationEnv:
 
     def _update_robot_positions(self, v_left, v_right):
         lin_vel = (v_left + v_right) / 2 * self.wheel_radius
-        ang_vel = torch.degrees((v_right - v_left) / self.wheel_base * self.wheel_radius)
+        ang_vel = torch.rad2deg((v_right - v_left) / self.wheel_base * self.wheel_radius)
         
-        new_x = self.robot_x + lin_vel * torch.cos(torch.radians(self.robot_orientation)) * self.dt
-        new_y = self.robot_y + lin_vel * torch.sin(torch.radians(self.robot_orientation)) * self.dt
+        new_x = self.robot_x + lin_vel * torch.cos(torch.deg2rad(self.robot_orientation)) * self.dt
+        new_y = self.robot_y + lin_vel * torch.sin(torch.deg2rad(self.robot_orientation)) * self.dt
         new_orient = (self.robot_orientation + ang_vel * self.dt) % 360
         
         # Collision check for all robots
@@ -329,10 +330,7 @@ class VectorRobotExplorationEnv:
         Get LIDAR distances for the entire population. 
         Prioritizes the O(1) LUT but falls back to vectorized ray marching.
         """
-        if self.use_lut:
-            if self.lidar_lut is None:
-                raise ValueError("use_lut is True but lidar_lut was not loaded. Check your paths.")
-            
+        if self.use_lut and self.lidar_lut is not None:
             # 1. Prepare indices (H, W)
             ixs = torch.round(self.robot_x).long()
             iys = torch.round(self.robot_y).long()
@@ -353,7 +351,7 @@ class VectorRobotExplorationEnv:
 
         # FALLBACK: Vectorized Ray Marching (if LUT is not used/available)
         # Raise warning if LUT was intended but not loaded
-        if self.use_lut:
+        if self.use_lut and self.lidar_lut is None:
             warnings.warn("use_lut is True but lidar_lut was not loaded. Falling back to vectorized ray marching.")
 
         return self._compute_vectorized_ray_marching()
@@ -367,7 +365,7 @@ class VectorRobotExplorationEnv:
         steps = torch.arange(self.ray_length, device=self.device)
         
         # Absolute angles for every ray of every robot: (num_envs, num_rays)
-        angles_rad = torch.radians(self.robot_orientation[:, None] + self.lidar_angles)
+        angles_rad = torch.deg2rad(self.robot_orientation[:, None] + self.lidar_angles)
         
         # Unit vectors: (num_envs, num_rays, 1)
         dx = torch.cos(angles_rad)[:, :, None]
