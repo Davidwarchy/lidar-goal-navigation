@@ -9,6 +9,7 @@ import json
 import time
 from datetime import datetime
 import numpy as np
+import torch
 
 
 class StrategyLoggingMixin:
@@ -122,6 +123,14 @@ class StrategyLoggingMixin:
             self.trial_goals_reached = set()
             self.trial_agent_success_data = {}
     
+    def _to_python_scalar(self, value):
+        """Convert torch tensor or numpy array to Python scalar."""
+        if torch.is_tensor(value):
+            return value.item() if value.numel() == 1 else value.cpu().tolist()
+        elif isinstance(value, np.ndarray):
+            return value.item() if value.size == 1 else value.tolist()
+        return value
+    
     def _log_step(self, step, active_mask, goal_reached_mask, env):
         """
         Log a single step of execution within a generation.
@@ -139,18 +148,23 @@ class StrategyLoggingMixin:
         for idx in new_goal_indices:
             if idx not in self.gen_goals_reached:
                 self.gen_goals_reached.add(idx)
-                
+            
                 # Store success data for this agent
+                
+                steps = step
+                energy = self._to_python_scalar(env.energy[idx])
+                health = self._to_python_scalar(env.health[idx])
+                
                 self.gen_agent_success_data[idx] = {
-                    "steps_to_success": step,
-                    "final_energy": env.energy[idx],
-                    "final_health": env.health[idx]
+                    "steps_to_success": steps,
+                    "final_energy": energy,
+                    "final_health": health
                 }
                 
                 # Write to agent stats CSV immediately
                 init_dist = self.gen_initial_distances[idx] if idx < len(self.gen_initial_distances) else -1
                 self.agent_writer.writerow([
-                    idx, True, step, env.energy[idx], env.health[idx], init_dist
+                    idx, True, steps, energy, health, init_dist
                 ])
                 self.agent_stats_file.flush()
         
@@ -169,14 +183,17 @@ class StrategyLoggingMixin:
         """
         self.gen_initial_distances = []
         for i in range(env.num_envs):
-            dx = env.robot_x[i] - env.goal_x[i]
-            dy = env.robot_y[i] - env.goal_y[i]
+            dx = (env.robot_x[i] - env.goal_x[i]).cpu().item()
+            dy = (env.robot_y[i] - env.goal_y[i]).cpu().item()
             dist = np.sqrt(dx*dx + dy*dy)
             self.gen_initial_distances.append(dist)
             
+            energy_val = env.energy[i].cpu().item()
+            health_val = env.health[i].cpu().item()
+            
             # Write initial row for agent (goal_reached = False initially)
             self.agent_writer.writerow([
-                i, False, -1, env.energy[i], env.health[i], dist
+                i, False, -1, energy_val, health_val, dist
             ])
         self.agent_stats_file.flush()
     

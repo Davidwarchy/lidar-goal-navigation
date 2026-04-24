@@ -1,7 +1,8 @@
-# strategies/uniform.py - Updated with device awareness
+import torch
 import numpy as np
 import os
 import multiprocessing as mp
+from tqdm import tqdm
 from .base_strategy import BaseStrategy
 from .log import StrategyLoggingMixin
 from env import VectorRobotExplorationEnv
@@ -42,6 +43,8 @@ class UniformRunLengthStrategy(BaseStrategy, StrategyLoggingMixin):
         trial_extinct = False
         
         # Run generations until extinction or max_generations
+        gen_pbar = tqdm(desc=f"Trial {trial_num}/{self.num_trials}", unit="gen", position=0)
+        
         while not trial_extinct:
             if max_generations and generation > max_generations:
                 break
@@ -52,46 +55,60 @@ class UniformRunLengthStrategy(BaseStrategy, StrategyLoggingMixin):
             # Reset environment for this generation
             obs = env.reset()
             self._log_initial_agent_data(env)
-                
-            # Per-agent state
-            steps_left = np.random.randint(self.min_step, self.max_step + 1, size=env.num_envs)
-            direction = np.random.randint(0, 4, size=env.num_envs)
-                
-            # Track which agents have reached goal in this generation
-            goal_reached = np.zeros(env.num_envs, dtype=bool)
             
-            while not np.all(env.done):
-                actions = direction.copy()
+            # Per-agent state
+            steps_left = torch.randint(self.min_step, self.max_step + 1, (env.num_envs,), device=env.device)
+            direction = torch.randint(0, 4, (env.num_envs,), device=env.device)
+            # Track which agents have reached goal in this generation
+            goal_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+            
+            while not torch.all(env.done):
+                actions = direction.cpu().numpy()
                 obs, rewards, dones, info = env.step(actions, action_space="discrete")
-                    
+                
                 # Track newly reached goals
-                new_goals = info["goal_reached"] & ~goal_reached
-                goal_reached |= info["goal_reached"]
+                goal_reached_np = info["goal_reached"]
+                new_goals = torch.from_numpy(goal_reached_np).bool().to(env.device) & ~goal_reached
+                goal_reached = goal_reached | torch.from_numpy(goal_reached_np).bool().to(env.device)
+                
                 steps_left -= 1
                 need_new = steps_left <= 0
-                if np.any(need_new):
-                    direction[need_new] = np.random.randint(0, 4, size=np.sum(need_new))
-                    steps_left[need_new] = np.random.randint(self.min_step, self.max_step + 1, size=np.sum(need_new))
+                
+                if torch.any(need_new):
+                    need_new_indices = torch.where(need_new)[0]
+                    new_directions = torch.randint(0, 4, (len(need_new_indices),), device=env.device)
+                    direction[need_new_indices] = new_directions
+                    steps_left[need_new_indices] = torch.randint(
+                        self.min_step, self.max_step + 1, (len(need_new_indices),), device=env.device
+                    )
                 
                 # Log this step
-                active_mask = ~env.done
-                self._log_step(env.current_step, active_mask, new_goals, env)
+                self._log_step(
+                    env.current_step, 
+                    (~env.done).cpu().numpy(), 
+                    new_goals.cpu().numpy(), 
+                    env
+                )
                 
                 if env.render_flag:
                     env.render()
-                    
-                if env.verbose and env.current_step % 500 == 0:
-                    active = np.sum(~env.done)
-                    print(f"Trial {trial_num}, Gen {generation}, Step {env.current_step}, Active: {active}")
+                
+                percent_done = (torch.sum(goal_reached).item() / env.num_envs) * 100
+                gen_pbar.set_postfix({
+                    "Gen": generation, 
+                    "Step": env.current_step, 
+                    "Success": f"{percent_done:.1f}%"
+                })
             
-            # Log generation completion
             has_survivors = self._log_generation_complete(env)
+            gen_pbar.update(1)
+            
             if not has_survivors:
                 trial_extinct = True
                 self.trial_extinct = True
             generation += 1
         
-        # Log trial completion
+        gen_pbar.close()
         self._log_trial_complete(env)
         env.close()
 

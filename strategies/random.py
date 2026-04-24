@@ -1,7 +1,8 @@
-# strategies/random.py - Updated with device awareness
+import torch
 import numpy as np
 import os
 import multiprocessing as mp
+from tqdm import tqdm
 from .base_strategy import BaseStrategy
 from .log import StrategyLoggingMixin
 from env import VectorRobotExplorationEnv
@@ -34,7 +35,8 @@ class RandomWalkStrategy(BaseStrategy, StrategyLoggingMixin):
         generation = 1
         trial_extinct = False
         
-        # Run generations until extinction or max_generations
+        gen_pbar = tqdm(desc=f"Trial {trial_num}/{self.num_trials}", unit="gen", position=0)
+        
         while not trial_extinct:
             if max_generations and generation > max_generations:
                 break
@@ -45,32 +47,39 @@ class RandomWalkStrategy(BaseStrategy, StrategyLoggingMixin):
             # Reset environment for this generation
             obs = env.reset()
             self._log_initial_agent_data(env)
-            
+
             # Track which agents have reached goal in this generation
-            goal_reached = np.zeros(env.num_envs, dtype=bool)
+            goal_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
             
             # Run this generation
-            while not np.all(env.done):
-                actions = np.random.randint(0, 4, size=env.num_envs)
-                obs, rewards, dones, info = env.step(actions, action_space="discrete")
+            while not torch.all(env.done):
+                actions = torch.randint(0, 4, (env.num_envs,), device=env.device)
+                obs, rewards, dones, info = env.step(actions.cpu().numpy(), action_space="discrete")
                 
-                # Track newly reached goals
-                new_goals = info["goal_reached"] & ~goal_reached
-                goal_reached |= info["goal_reached"]
+                goal_reached_np = info["goal_reached"]
+                new_goals = torch.from_numpy(goal_reached_np).bool().to(env.device) & ~goal_reached
+                goal_reached = goal_reached | torch.from_numpy(goal_reached_np).bool().to(env.device)
                 
                 # Log this step
-                active_mask = ~env.done
-                self._log_step(env.current_step, active_mask, new_goals, env)
+                self._log_step(
+                    env.current_step, 
+                    (~env.done).cpu().numpy(), 
+                    new_goals.cpu().numpy(), 
+                    env
+                )
                 
                 if env.render_flag:
                     env.render()
-                    
-                if env.verbose and env.current_step % 20 == 0:
-                    active = np.sum(~env.done)
-                    print(f"Trial {trial_num}, Gen {generation}, Step {env.current_step}, Active agents: {active}")
+                
+                percent_done = (torch.sum(goal_reached).item() / env.num_envs) * 100
+                gen_pbar.set_postfix({
+                    "Gen": generation, 
+                    "Step": env.current_step, 
+                    "Success": f"{percent_done:.1f}%"
+                })
             
-            # Log generation completion
             has_survivors = self._log_generation_complete(env)
+            gen_pbar.update(1)
             
             if not has_survivors:
                 trial_extinct = True
@@ -78,9 +87,10 @@ class RandomWalkStrategy(BaseStrategy, StrategyLoggingMixin):
             
             generation += 1
         
-        # Log trial completion
+        gen_pbar.close()
         self._log_trial_complete(env)
         env.close()
+
 
 def _run_random_trial(trial_num, env_params, base_output_dir, max_generations):
     strategy = RandomWalkStrategy(num_trials=1, max_generations=max_generations, parallel_trials=False)
