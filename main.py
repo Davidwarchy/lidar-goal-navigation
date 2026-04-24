@@ -21,6 +21,7 @@ def load_strategy(name,
                   num_generations=30, 
                   population_size=100, 
                   mutation_rate=0.1,
+                  mutation_mag=0.5,
                   load_weights=False,
                   weights_dir="weights",
                   ga_curriculum_enabled=False,
@@ -68,7 +69,7 @@ def load_strategy(name,
             generations=num_generations,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
-            mutation_mag=0.5,
+            mutation_mag=mutation_mag,
             network_type="spiking",
             action_space=action_space,  
             action_distribution=action_distribution, 
@@ -84,7 +85,7 @@ def load_strategy(name,
             generations=num_generations,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
-            mutation_mag=0.5,
+            mutation_mag=mutation_mag,
             network_type="feedforward",
             curriculum_enabled=ga_curriculum_enabled,
             curriculum_success_threshold=ga_curriculum_success_threshold,
@@ -191,6 +192,8 @@ def parse_args():
     parser.add_argument("--device", type=str, default="cuda",
                         choices=["cuda", "cpu"],
                         help="Device to run on (cuda or cpu)")
+    parser.add_argument("--mutation_mag", type=float, default=0.5,
+                    help="Mutation magnitude for genetic algorithm")
 
     return parser.parse_args()
 
@@ -229,6 +232,10 @@ def main():
         "continue_after_goal": args.continue_after_goal,
         "parallel_trials": args.parallel,
         "device": args.device,
+        "mutation_rate": args.mutation_rate,
+        "mutation_magnitude": args.mutation_mag,
+        "action_space": args.action_space,          
+        "action_distribution": args.action_distribution,
         "command_line_args": vars(args)
     }
     with open(os.path.join(run_dir, "metadata.json"), 'w') as f:
@@ -256,6 +263,7 @@ def main():
         num_generations=args.generations,
         num_trials=args.trials,
         mutation_rate=args.mutation_rate,
+        mutation_mag=args.mutation_mag,
         alpha=args.alpha,
         min_step=args.min_step,
         max_step=args.max_step_len,
