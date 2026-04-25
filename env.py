@@ -1,3 +1,4 @@
+#### .\env.py
 # env.py - Fixed version with correct PyTorch functions
 import torch
 import torch.nn.functional as F
@@ -133,6 +134,24 @@ class VectorRobotExplorationEnv:
         self._pygame_initialized = False
         self._save_metadata()
 
+        # ---------- Pre-allocated buffers for GPU memory reuse ----------
+        # These tensors are reused every step to avoid new allocations.
+        self._v_left = torch.zeros(num_envs, device=self.device)
+        self._v_right = torch.zeros(num_envs, device=self.device)
+        self._new_x = torch.zeros(num_envs, device=self.device)
+        self._new_y = torch.zeros(num_envs, device=self.device)
+        self._new_orient = torch.zeros(num_envs, device=self.device)
+        self._ixs = torch.zeros(num_envs, dtype=torch.long, device=self.device)
+        self._iys = torch.zeros(num_envs, dtype=torch.long, device=self.device)
+        self._dist_vals = torch.zeros(num_envs, device=self.device)
+        self._free_mask = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._update_mask = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._collision_mask = torch.zeros(num_envs, dtype=torch.bool, device=self.device)
+        self._linear_vel = torch.zeros(num_envs, device=self.device)
+        self._angular_vel = torch.zeros(num_envs, device=self.device)
+        # LIDAR distance buffer (kept on GPU, copied to CPU only when needed)
+        self._lidar_distances = torch.zeros((num_envs, num_rays), device=self.device)
+
     def _load_lut(self):
         base_name = os.path.splitext(os.path.basename(self.map_image_path))[0]
         lut_path = os.path.join("environments", "luts", f"{base_name}_360.npy")
@@ -221,73 +240,75 @@ class VectorRobotExplorationEnv:
         action_space : str
             "discrete" or "continuous"
         """
-        # Convert actions to torch tensor on device if needed
-        if not isinstance(actions, torch.Tensor):
-            actions = torch.tensor(actions, device=self.device)
-        
-        # Only decrement health for robots that are still active (not done)
-        active_mask = ~self.done
-        
-        if action_space == "discrete":
-            # Vectorized action mapping for discrete actions
-            v_left = torch.zeros(self.num_envs, device=self.device)
-            v_right = torch.zeros(self.num_envs, device=self.device)
+        with torch.no_grad():
+            # Convert actions to torch tensor on device if needed
+            if not isinstance(actions, torch.Tensor):
+                actions = torch.tensor(actions, device=self.device)
             
-            # Up (action 0)
-            v_left[actions == 0] = self.linear_speed
-            v_right[actions == 0] = self.linear_speed
-            # Down (action 1)
-            v_left[actions == 1] = -self.linear_speed
-            v_right[actions == 1] = -self.linear_speed
-            # Left (action 2)
-            left_mask = actions == 2
-            v_left[left_mask] = self.linear_speed / 4
-            v_right[left_mask] = -self.linear_speed / 4
-            # Right (action 3)
-            right_mask = actions == 3
-            v_left[right_mask] = -self.linear_speed / 4
-            v_right[right_mask] = self.linear_speed / 4
+            # Only decrement health for robots that are still active (not done)
+            active_mask = ~self.done
             
-        else:  # continuous action space
-            # Actions shape: (num_envs, 2) - [linear_velocity, angular_velocity]
-            linear_vel = actions[:, 0]
-            angular_vel = actions[:, 1]  # degrees per second
+            if action_space == "discrete":
+                # Reuse pre‑allocated v_left/v_right
+                self._v_left.zero_()
+                self._v_right.zero_()
+                # Up (action 0)
+                mask0 = (actions == 0)
+                self._v_left[mask0] = self.linear_speed
+                self._v_right[mask0] = self.linear_speed
+                # Down (action 1)
+                mask1 = (actions == 1)
+                self._v_left[mask1] = -self.linear_speed
+                self._v_right[mask1] = -self.linear_speed
+                # Left (action 2)
+                mask2 = (actions == 2)
+                self._v_left[mask2] = self.linear_speed / 4
+                self._v_right[mask2] = -self.linear_speed / 4
+                # Right (action 3)
+                mask3 = (actions == 3)
+                self._v_left[mask3] = -self.linear_speed / 4
+                self._v_right[mask3] = self.linear_speed / 4
+                v_left = self._v_left
+                v_right = self._v_right
+            else:  # continuous action space
+                # Actions shape: (num_envs, 2) - [linear_velocity, angular_velocity]
+                linear_vel = actions[:, 0]
+                angular_vel = actions[:, 1]  # degrees per second
+                v_left = linear_vel - (angular_vel * self.wheel_base / 2) / self.wheel_radius
+                v_right = linear_vel + (angular_vel * self.wheel_base / 2) / self.wheel_radius
             
-            v_left = linear_vel - (angular_vel * self.wheel_base / 2) / self.wheel_radius
-            v_right = linear_vel + (angular_vel * self.wheel_base / 2) / self.wheel_radius
-        
-        # Update positions
-        self._update_robot_positions(v_left, v_right)
-        
-        # Get Perception
-        obs = self._get_observation()
+            # Update positions
+            self._update_robot_positions(v_left, v_right)
+            
+            # Get Perception
+            obs = self._get_observation()
 
-        # Check for Success (Goal reached)
-        dx = self.robot_x - self.goal_x
-        dy = self.robot_y - self.goal_y
-        goal_reached = (dx*dx + dy*dy) <= self.goal_success_dist ** 2
-        
-        # Success handling
-        # Reward is only for the step they actually find it
-        rewards = torch.where(goal_reached & active_mask, torch.tensor(1.0, device=self.device), torch.tensor(0.0, device=self.device))
+            # Check for Success (Goal reached)
+            dx = self.robot_x - self.goal_x
+            dy = self.robot_y - self.goal_y
+            goal_reached = (dx*dx + dy*dy) <= self.goal_success_dist ** 2
+            
+            # Success handling
+            # Reward is only for the step they actually find it
+            rewards = torch.where(goal_reached & active_mask, torch.tensor(1.0, device=self.device), torch.tensor(0.0, device=self.device))
 
-        # Resource Depletion
-        # In 'Life on Silicon', every step costs 1 energy point 
-        # We only decrement if they haven't finished yet
-        self.energy[active_mask] -= 1
-        
-        # Final Termination Check
-        # If NOT continuing after goal, reaching it marks them as done immediately
-        if not self.continue_after_goal:
-            # Done if: No energy OR No health OR Reached Max Steps OR Reached Goal
-            new_dones = (self.energy <= 0) | (self.health <= 0) | \
-                        (self.current_step >= self.max_steps) | goal_reached
-        else:
-            # If continuing, they only stop when they physically 'die' or time runs out
-            new_dones = (self.current_step >= self.max_steps)
+            # Resource Depletion
+            # In 'Life on Silicon', every step costs 1 energy point 
+            # We only decrement if they haven't finished yet
+            self.energy[active_mask] -= 1
+            
+            # Final Termination Check
+            # If NOT continuing after goal, reaching it marks them as done immediately
+            if not self.continue_after_goal:
+                # Done if: No energy OR No health OR Reached Max Steps OR Reached Goal
+                new_dones = (self.energy <= 0) | (self.health <= 0) | \
+                            (self.current_step >= self.max_steps) | goal_reached
+            else:
+                # If continuing, they only stop when they physically 'die' or time runs out
+                new_dones = (self.current_step >= self.max_steps)
 
-        self.current_step += 1
-        self.done = self.done | new_dones
+            self.current_step += 1
+            self.done = self.done | new_dones
 
         # Convert rewards to CPU for return (if needed for non-GPU code)
         rewards_cpu = rewards.cpu().numpy() if rewards.is_cuda else rewards.numpy()
@@ -296,34 +317,37 @@ class VectorRobotExplorationEnv:
         return obs, rewards_cpu, done_cpu, {"goal_reached": goal_reached.cpu().numpy() if goal_reached.is_cuda else goal_reached.numpy()}
 
     def _update_robot_positions(self, v_left, v_right):
-        lin_vel = (v_left + v_right) / 2 * self.wheel_radius
-        ang_vel = torch.rad2deg((v_right - v_left) / self.wheel_base * self.wheel_radius)
-        
-        new_x = self.robot_x + lin_vel * torch.cos(torch.deg2rad(self.robot_orientation)) * self.dt
-        new_y = self.robot_y + lin_vel * torch.sin(torch.deg2rad(self.robot_orientation)) * self.dt
-        new_orient = (self.robot_orientation + ang_vel * self.dt) % 360
-        
-        # Collision check for all robots
-        ixs = new_x.long()
-        iys = new_y.long()
-        valid = (ixs >= 0) & (ixs < self.map_width) & (iys >= 0) & (iys < self.map_height)
-        
-        # Safe distance transform lookup
-        dist_vals = torch.zeros(self.num_envs, device=self.device)
-        valid_indices = torch.where(valid)
-        dist_vals[valid_indices] = self.distance_map_tensor[iys[valid_indices], ixs[valid_indices]]
-        
-        free_mask = dist_vals >= self.robot_radius
-        
-        # Update only if free and not already done
-        update_mask = free_mask & ~self.done
-        self.robot_x[update_mask] = new_x[update_mask]
-        self.robot_y[update_mask] = new_y[update_mask]
-        self.robot_orientation[update_mask] = new_orient[update_mask]
-        
-        # Penalty for collision
-        collision_mask = ~free_mask & ~self.done
-        self.health[collision_mask] -= 1
+        with torch.no_grad():
+            # Compute linear and angular velocities (use buffers)
+            self._linear_vel = (v_left + v_right) / 2 * self.wheel_radius
+            self._angular_vel = torch.rad2deg((v_right - v_left) / self.wheel_base * self.wheel_radius)
+            
+            # Compute new candidate states (reuse pre‑allocated buffers)
+            self._new_x = self.robot_x + self._linear_vel * torch.cos(torch.deg2rad(self.robot_orientation)) * self.dt
+            self._new_y = self.robot_y + self._linear_vel * torch.sin(torch.deg2rad(self.robot_orientation)) * self.dt
+            self._new_orient = (self.robot_orientation + self._angular_vel * self.dt) % 360
+            
+            # Collision check for all robots
+            self._ixs = self._new_x.long()
+            self._iys = self._new_y.long()
+            valid = (self._ixs >= 0) & (self._ixs < self.map_width) & (self._iys >= 0) & (self._iys < self.map_height)
+            
+            # Safe distance transform lookup (reuse self._dist_vals)
+            self._dist_vals.zero_()
+            valid_indices = torch.where(valid)
+            self._dist_vals[valid_indices] = self.distance_map_tensor[self._iys[valid_indices], self._ixs[valid_indices]]
+            
+            self._free_mask = self._dist_vals >= self.robot_radius
+            self._update_mask = self._free_mask & ~self.done
+    
+            # Update only if free and not already done
+            self.robot_x[self._update_mask] = self._new_x[self._update_mask]
+            self.robot_y[self._update_mask] = self._new_y[self._update_mask]
+            self.robot_orientation[self._update_mask] = self._new_orient[self._update_mask]
+            
+            # Penalty for collision
+            self._collision_mask = ~self._free_mask & ~self.done
+            self.health[self._collision_mask] -= 1
 
     def _get_observation(self):
         """
@@ -331,23 +355,25 @@ class VectorRobotExplorationEnv:
         Prioritizes the O(1) LUT but falls back to vectorized ray marching.
         """
         if self.use_lut and self.lidar_lut is not None:
-            # 1. Prepare indices (H, W)
-            ixs = torch.round(self.robot_x).long()
-            iys = torch.round(self.robot_y).long()
-            
-            # Boundary clipping for safety
-            ixs = torch.clamp(ixs, 0, self.map_width - 1)
-            iys = torch.clamp(iys, 0, self.map_height - 1)
-            
-            # 2. Map world angles to LUT indices
-            # Shape: (num_envs, num_rays)
-            angles = (self.robot_orientation[:, None] + self.lidar_angles) % 360
-            angle_idxs = angles.long()
-            
-            # 3. Vectorized LUT retrieval
-            # We use advanced indexing to pull distances for all robots at once
-            distances = self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
-            return distances.cpu().numpy() if distances.is_cuda else distances.numpy()
+            with torch.no_grad():
+                # 1. Prepare indices (H, W)
+                ixs = torch.round(self.robot_x).long()
+                iys = torch.round(self.robot_y).long()
+                
+                # Boundary clipping for safety
+                ixs = torch.clamp(ixs, 0, self.map_width - 1)
+                iys = torch.clamp(iys, 0, self.map_height - 1)
+                
+                # 2. Map world angles to LUT indices
+                # Shape: (num_envs, num_rays)
+                angles = (self.robot_orientation[:, None] + self.lidar_angles) % 360
+                angle_idxs = angles.long()
+                
+                # 3. Vectorized LUT retrieval into pre‑allocated buffer
+                # We use advanced indexing to pull distances for all robots at once
+                self._lidar_distances[:] = self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
+                # Return CPU copy (the GPU buffer is reused next time)
+                return self._lidar_distances.cpu().numpy()
 
         # FALLBACK: Vectorized Ray Marching (if LUT is not used/available)
         # Raise warning if LUT was intended but not loaded
@@ -361,41 +387,42 @@ class VectorRobotExplorationEnv:
         Computes LIDAR for all robots simultaneously without a LUT.
         Complexity: O(num_envs * num_rays * ray_length)
         """
-        # Create ray steps on GPU
-        steps = torch.arange(self.ray_length, device=self.device)
-        
-        # Absolute angles for every ray of every robot: (num_envs, num_rays)
-        angles_rad = torch.deg2rad(self.robot_orientation[:, None] + self.lidar_angles)
-        
-        # Unit vectors: (num_envs, num_rays, 1)
-        dx = torch.cos(angles_rad)[:, :, None]
-        dy = torch.sin(angles_rad)[:, :, None]
-        
-        # Compute all potential ray coordinates: (num_envs, num_rays, ray_length)
-        # x_points = robot_x + dx * steps
-        ray_x = (self.robot_x[:, None, None] + dx * steps).long()
-        ray_y = (self.robot_y[:, None, None] + dy * steps).long()
-        
-        # Clip to map boundaries to avoid index errors
-        ray_x_clp = torch.clamp(ray_x, 0, self.map_width - 1)
-        ray_y_clp = torch.clamp(ray_y, 0, self.map_height - 1)
-        
-        # Check hits against the obstacle map
-        # Resulting 'hits' shape: (num_envs, num_rays, ray_length)
-        hits = self.obstacle_map_tensor[ray_y_clp, ray_x_clp] == 1
-        
-        # Find the first hit along the 'ray_length' axis
-        # argmax returns the first index of 'True'
-        hit_indices = torch.argmax(hits.float(), dim=2)
-        
-        # Identify rays that never hit anything
-        no_hits = ~torch.any(hits, dim=2)
-        
-        # Final distances: use hit index or default to max ray_length
-        distances = hit_indices.float()
-        distances[no_hits] = float(self.ray_length)
-        
-        return distances.cpu().numpy() if distances.is_cuda else distances.numpy()
+        with torch.no_grad():
+            # Create ray steps on GPU
+            steps = torch.arange(self.ray_length, device=self.device)
+            
+            # Absolute angles for every ray of every robot: (num_envs, num_rays)
+            angles_rad = torch.deg2rad(self.robot_orientation[:, None] + self.lidar_angles)
+            
+            # Unit vectors: (num_envs, num_rays, 1)
+            dx = torch.cos(angles_rad)[:, :, None]
+            dy = torch.sin(angles_rad)[:, :, None]
+            
+            # Compute all potential ray coordinates: (num_envs, num_rays, ray_length)
+            # x_points = robot_x + dx * steps
+            ray_x = (self.robot_x[:, None, None] + dx * steps).long()
+            ray_y = (self.robot_y[:, None, None] + dy * steps).long()
+            
+            # Clip to map boundaries to avoid index errors
+            ray_x_clp = torch.clamp(ray_x, 0, self.map_width - 1)
+            ray_y_clp = torch.clamp(ray_y, 0, self.map_height - 1)
+            
+            # Check hits against the obstacle map
+            # Resulting 'hits' shape: (num_envs, num_rays, ray_length)
+            hits = self.obstacle_map_tensor[ray_y_clp, ray_x_clp] == 1
+            
+            # Find the first hit along the 'ray_length' axis
+            # argmax returns the first index of 'True'
+            hit_indices = torch.argmax(hits.float(), dim=2)
+            
+            # Identify rays that never hit anything
+            no_hits = ~torch.any(hits, dim=2)
+            
+            # Final distances: use hit index or default to max ray_length
+            distances = hit_indices.float()
+            distances[no_hits] = float(self.ray_length)
+            
+            return distances.cpu().numpy()
 
     def render(self):
         if not self.render_flag: return
@@ -458,3 +485,11 @@ class VectorRobotExplorationEnv:
 
     def close(self):
         if self._pygame_initialized: self.pygame.quit()
+        # Optional: clear GPU cache (not called automatically, but safe to add here)
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def clear_gpu_cache(self):
+        """Explicitly clear GPU memory cache. Can be called between generations."""
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

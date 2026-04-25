@@ -5,7 +5,7 @@ BASE = {
     "trials": 7,
     "generations": 200,
     "population": 1000,
-    "max_steps": 1000,   # keep time pressure fixed now
+    "max_steps": 1000, 
 }
 
 MUTATION_RATES = [0.01, 0.05, 0.1, 0.3, 0.5, 0.75]
@@ -53,10 +53,10 @@ def run(strategy, mutation_rate):
 if __name__ == "__main__":
     print("\n=== MUTATION RATE SWEEP ===\n")
 
-    for strategy in STRATEGIES:
-        print(f"\n=== STRATEGY: {strategy.upper()} ===\n")
+    for m in MUTATION_RATES:
+        print(f"\n=== MUTATION RATE: {m} ===\n")
 
-        for m in MUTATION_RATES:
+        for strategy in STRATEGIES:
             run(strategy, m)
 
     print("\n=== DONE ===")

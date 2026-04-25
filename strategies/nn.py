@@ -1,4 +1,4 @@
-# strategies/nn.py - Rewritten with PyTorch GPU support
+# strategies/nn.py - Rewritten with PyTorch GPU support and memory leak fixes
 """
 Vectorized Neural Networks with Genetic Algorithm (Neuroevolution)
 
@@ -417,6 +417,9 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
                     desc=f"Trial {trial_idx}/{strategy_params['num_trials']}",
                     unit="gen", position=0)
     
+    # Pre‑allocate buffer for actions (reused each step)
+    actions_buffer_np = np.zeros(strategy_params['population_size'], dtype=np.int32)
+    
     for gen in gen_pbar:
         gen_dir = os.path.join(trial_dir, f"gen_{gen}")
         os.makedirs(gen_dir, exist_ok=True)
@@ -453,59 +456,68 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
             step_writer = csv.writer(step_f)
             step_writer.writerow(["step", "percent_done", "new_successes"])
             
-            while True:
-                output = pop_brain.forward(obs / env.ray_length)
-                
-                if strategy_params['action_space'] == "discrete":
-                    if strategy_params['action_distribution'] == "deterministic":
-                        actions = torch.argmax(output, dim=1)
+            # Main evaluation loop – wrapped in no_grad to prevent graph buildup
+            with torch.no_grad():
+                while True:
+                    # Normalized observations
+                    normalized_obs = obs / env.ray_length
+                    output = pop_brain.forward(normalized_obs)
+                    
+                    if strategy_params['action_space'] == "discrete":
+                        if strategy_params['action_distribution'] == "deterministic":
+                            actions = torch.argmax(output, dim=1)
+                        else:
+                            exp_output = torch.exp(output - torch.max(output, dim=1, keepdim=True)[0])
+                            probs = exp_output / torch.sum(exp_output, dim=1, keepdim=True)
+                            actions = torch.tensor([np.random.choice(4, p=probs[i].cpu().numpy()) for i in range(len(probs))], device=device)
                     else:
-                        exp_output = torch.exp(output - torch.max(output, dim=1, keepdim=True)[0])
-                        probs = exp_output / torch.sum(exp_output, dim=1, keepdim=True)
-                        actions = torch.tensor([np.random.choice(4, p=probs[i].cpu().numpy()) for i in range(len(probs))], device=device)
-                else:
-                    linear_vel = output[:, 0]
-                    angular_vel = output[:, 1]
-                    linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
-                    angular_vel = torch.clamp(angular_vel, -1, 1) * 90
-                    actions = torch.stack([linear_vel, angular_vel], dim=1)
-                    if strategy_params['action_distribution'] == "stochastic":
-                        noise_scale = 0.1
-                        actions += torch.randn_like(actions) * noise_scale
-                        actions[:, 0] = torch.clamp(actions[:, 0], -env.linear_speed, env.linear_speed)
-                        actions[:, 1] = torch.clamp(actions[:, 1], -90, 90)
-                
-                # Step environment
-                obs_np, rewards_np, dones_np, info = env.step(actions.cpu().numpy() if actions.is_cuda else actions.numpy(), 
-                                                               action_space=strategy_params['action_space'])
-                obs = torch.from_numpy(obs_np).float().to(device)
-                steps += 1
-                
-                # Convert info to tensors
-                goal_reached_np = info["goal_reached"]
-                goal_reached = torch.from_numpy(goal_reached_np).bool().to(device) if isinstance(goal_reached_np, np.ndarray) else torch.tensor(goal_reached_np, device=device).bool()
-                
-                new_successes = goal_reached & ~reached_goal
-                new_success_indices = torch.where(new_successes)[0]
-                for idx in new_success_indices:
-                    reached_goal[idx] = True
-                    success_steps[idx] = steps
-                    success_energy[idx] = env.energy[idx].float() if isinstance(env.energy[idx], torch.Tensor) else torch.tensor(env.energy[idx], device=device).float()
-                    success_health[idx] = env.health[idx].float() if isinstance(env.health[idx], torch.Tensor) else torch.tensor(env.health[idx], device=device).float()
-                
-                percent_done = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
-                step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
-                step_f.flush()
-                
-                if steps % 10 == 0:
-                    gen_pbar.set_postfix({"Step": steps, "%Done": f"{percent_done:.1f}%"})
-                
-                if env.render_flag:
-                    env.render()
-                
-                dones = torch.from_numpy(dones_np).bool().to(device) if isinstance(dones_np, np.ndarray) else torch.tensor(dones_np, device=device).bool()
-                if torch.all(dones):
-                    break
+                        linear_vel = output[:, 0]
+                        angular_vel = output[:, 1]
+                        linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
+                        angular_vel = torch.clamp(angular_vel, -1, 1) * 90
+                        actions = torch.stack([linear_vel, angular_vel], dim=1)
+                        if strategy_params['action_distribution'] == "stochastic":
+                            noise_scale = 0.1
+                            actions += torch.randn_like(actions) * noise_scale
+                            actions[:, 0] = torch.clamp(actions[:, 0], -env.linear_speed, env.linear_speed)
+                            actions[:, 1] = torch.clamp(actions[:, 1], -90, 90)
+                    
+                    # Step environment (env.step already uses no_grad internally)
+                    # Convert actions to numpy efficiently
+                    if strategy_params['action_space'] == "discrete":
+                        actions_np = actions.cpu().numpy()
+                    else:
+                        actions_np = actions.cpu().numpy()
+                    
+                    obs_np, rewards_np, dones_np, info = env.step(actions_np, action_space=strategy_params['action_space'])
+                    obs = torch.from_numpy(obs_np).float().to(device)
+                    steps += 1
+                    
+                    # Convert info to tensors
+                    goal_reached_np = info["goal_reached"]
+                    goal_reached = torch.from_numpy(goal_reached_np).bool().to(device) if isinstance(goal_reached_np, np.ndarray) else torch.tensor(goal_reached_np, device=device).bool()
+                    
+                    new_successes = goal_reached & ~reached_goal
+                    new_success_indices = torch.where(new_successes)[0]
+                    for idx in new_success_indices:
+                        reached_goal[idx] = True
+                        success_steps[idx] = steps
+                        success_energy[idx] = env.energy[idx].float() if isinstance(env.energy[idx], torch.Tensor) else torch.tensor(env.energy[idx], device=device).float()
+                        success_health[idx] = env.health[idx].float() if isinstance(env.health[idx], torch.Tensor) else torch.tensor(env.health[idx], device=device).float()
+                    
+                    percent_done = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
+                    step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
+                    step_f.flush()
+                    
+                    if steps % 10 == 0:
+                        gen_pbar.set_postfix({"Step": steps, "%Done": f"{percent_done:.1f}%"})
+                    
+                    if env.render_flag:
+                        env.render()
+                    
+                    dones = torch.from_numpy(dones_np).bool().to(device) if isinstance(dones_np, np.ndarray) else torch.tensor(dones_np, device=device).bool()
+                    if torch.all(dones):
+                        break
         
         gen_duration = time.time() - gen_start_time
         survivor_indices = torch.where(reached_goal)[0]
@@ -603,23 +615,27 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
             gen_pbar.write(f"[EXTINCT] Trial {trial_idx} Gen {gen} - No survivors.")
             break
         
-        # Reproduction: random selection
-        if len(survivor_indices) > 0:
-            # Get genomes of survivors as a 2D tensor
-            survivor_genomes = pop_brain.get_weights()[survivor_indices]  # (n_survivors, total_params)
+        # Reproduction: random selection (all operations inside no_grad)
+        with torch.no_grad():
+            if len(survivor_indices) > 0:
+                # Get genomes of survivors as a 2D tensor
+                survivor_genomes = pop_brain.get_weights()[survivor_indices]  # (n_survivors, total_params)
 
-            # Select parents with replacement
-            parent_idx = torch.randint(0, len(survivor_indices), (strategy_params['population_size'],), device=device)
-            child_genomes = survivor_genomes[parent_idx].clone()
+                # Select parents with replacement
+                parent_idx = torch.randint(0, len(survivor_indices), (strategy_params['population_size'],), device=device)
+                child_genomes = survivor_genomes[parent_idx].clone()
 
-            # Vectorised mutation
-            mutation_mask = torch.rand_like(child_genomes) < strategy_params['mutation_rate']
-            noise = torch.randn_like(child_genomes) * strategy_params['mutation_mag']
-            child_genomes[mutation_mask] += noise[mutation_mask]
+                # Vectorised mutation
+                mutation_mask = torch.rand_like(child_genomes) < strategy_params['mutation_rate']
+                noise = torch.randn_like(child_genomes) * strategy_params['mutation_mag']
+                child_genomes[mutation_mask] += noise[mutation_mask]
 
-            # Assign back to the population
-            pop_brain.set_weights(child_genomes)
+                # Assign back to the population
+                pop_brain.set_weights(child_genomes)
     
+    # Optional: clear GPU cache after trial to free memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     env.close()
 
 
