@@ -7,7 +7,7 @@ BASE = {
     "population": 1000,
 }
 
-MAX_STEPS_LIST = [100, 500, 10000]
+MAX_STEPS_LIST = [100, 500, 5000, 10000]
 
 STRATEGIES = [
     "random",
@@ -18,10 +18,6 @@ STRATEGIES = [
 ]
 
 MAP = "6.png"
-
-# Default mutation parameters (you can change these)
-DEFAULT_MUTATION_RATE = 0.1
-DEFAULT_MUTATION_MAG = 0.5
 
 
 def run(strategy, max_steps):
