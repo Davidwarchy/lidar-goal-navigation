@@ -10,6 +10,9 @@ BASE = {
 MAX_STEPS_LIST = [100, 500, 10000]
 
 STRATEGIES = [
+    "random",
+    "levy", 
+    "uniform",
     "random_nn",
     "spiking"
 ]
