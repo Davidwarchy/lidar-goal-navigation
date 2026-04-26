@@ -34,7 +34,6 @@ def run(strategy, mutation_mag):
         "--max_steps", str(BASE["max_steps"]),
         "--save_top_k", "0",
         "--output_dir", out_dir,
-        "--mutation_rate", "0.1",  # fixed rate
         "--mutation_mag", str(mutation_mag),
         "--parallel"
     ]
@@ -54,10 +53,10 @@ def run(strategy, mutation_mag):
 if __name__ == "__main__":
     print("\n=== MUTATION MAGNITUDE SWEEP ===\n")
 
-    for strategy in STRATEGIES:
-        print(f"\n=== STRATEGY: {strategy.upper()} ===\n")
+    for mag in MUTATION_MAGS:
+        print(f"\n=== MUTATION MAGNITUDE: {mag} ===\n")
 
-        for mag in MUTATION_MAGS:
+        for strategy in STRATEGIES:
             run(strategy, mag)
 
     print("\n=== DONE ===")
