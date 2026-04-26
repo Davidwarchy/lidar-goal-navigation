@@ -118,3 +118,16 @@ experiments
             uniform 
             nn_random 
             nn_spiking 
+
+
+
+# To-do 
+Try do pending experiment for spiking_nn with a 10_000 population. It was taking too long on my computer. 
+
+Let's complete: 
+- mutation rate 
+- mutation magnitude 
+- steps 
+- population 
+
+Then proceed to others 
