@@ -49,6 +49,20 @@ Outputs are written to `analysis/performance/results/`:
 - `baseline_deltas.csv`
 - `report.json`
 
+## Performance Comparison Analysis
+
+After running experiments, compare strategies (including baseline-relative deltas) with:
+
+```bash
+python -m analysis.performance.run_performance_analysis --root output --baselines random,levy,uniform --success-threshold 25 --plots
+```
+
+Outputs are written to `analysis/performance/results/`:
+- `per_generation_comparison.csv`
+- `per_trial_summary.csv`
+- `baseline_deltas.csv`
+- `report.json`
+
 
 
 ## 🚀 Exploration Strategies
