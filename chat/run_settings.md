@@ -22,15 +22,14 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 
 --- 
 ## Difficulty 
-- Goal difficulty - 10, 30, 50, 70 
+- Goal difficulty - 10, 30, 50, 70 (**Running on Kaggle**)
 
 --- 
 ## Other factors 
 
-- Robot size 
+- Robot size - 1, 3, 5 
 - Cirriculum learning - on, off 
-- Generations - 100, 500 
-- Population - 100, 1_000, 10_000 
+- Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
 ## Noise 
