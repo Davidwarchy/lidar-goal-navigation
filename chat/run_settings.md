@@ -1,3 +1,13 @@
+# Standard 
+We want to have the following standard for the configuration tests 
+- _trials_ 7 
+- _generations_ 200 (arrived at by checking the generations at which the rate of success improves by less than a certain value in 10 generations)
+- _population_ 1000 
+- _max\_steps_ 1000 
+
+- standard (random_nn, spiking_nn) - **done on David PC** 
+- standard (random, levy, uniform) - **done on OMEN**
+
 # Test Configurations
 
 We are going to test these configurations. 
@@ -27,8 +37,8 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 --- 
 ## Other factors 
 
-- Robot size - 1, 3, 5 
-- Cirriculum learning - on, off 
+- Robot size - 1, 3, 5 (Peter)
+- Cirriculum learning - on, off (Peter)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
@@ -37,17 +47,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 - Determinism/Stochasticity - on, off 
 
 ## Fitness Function 
-- Fitness function - none, health, energy 
-
-# Standard 
-We want to have the following standard for the configuration tests 
-- _trials_ 7 
-- _generations_ 200 (arrived at by checking the generations at which the rate of success improves by less than a certain value in 10 generations)
-- _population_ 1000 
-- _max\_steps_ 1000 
-
-- standard (random_nn, spiking_nn) - **done on David PC** 
-- standard (random, levy, uniform) - **done on OMEN**
+- Fitness function - none, health, energy (Peter)
 
 This is what we are going to compare against. 
 
