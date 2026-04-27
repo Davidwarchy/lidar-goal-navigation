@@ -1,18 +1,24 @@
 # Test Configurations
+
+We are going to test these configurations. 
+
+## Generations 
+- We did for 1,000 generations and observed that there's little change after 200 generations, so we decided to use this as the base. 
+
 ## Time 
-Time pressure (max steps) - 100, 500, 1_000, 10_000 **OMEN** 
+Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**) 
 
 --- 
 ## Natural Selection 
-- Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75
-- Mutation magnitude - 
+- Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75 (**Done on OMEN**)
+- Mutation magnitude - 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0 (**Done on OMEN**)
 - Recombination - True, False 
 
 --- 
 ## Network architecture
-- Network architecture 
-- Hidden layer size - 
-- __LIF timesteps - 1, 2, 5, 10__ 
+- Network architecture - ? 
+- Hidden layer size - ? 
+- LIF timesteps - 1, 2, 5, 10
 
 --- 
 ## Difficulty 
@@ -22,18 +28,17 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 **OMEN**
 ## Other factors 
 
 - Robot size 
-- Cirriculum learning 
+- Cirriculum learning - on, off 
 - Generations - 100, 500 
 - Population - 100, 1_000, 10_000 
 
 --- 
 ## Noise 
-- Noise 
-- Determinism/Stochasticity 
+- Noise - on, off 
+- Determinism/Stochasticity - on, off 
 
 ## Fitness Function 
-- No explicit fitness function 
-- Explicit fitness function (based on health, energy)
+- Fitness function - none, health, energy 
 
 # Standard 
 We want to have the following standard for the configuration tests 
@@ -42,8 +47,14 @@ We want to have the following standard for the configuration tests
 - _population_ 1000 
 - _max\_steps_ 1000 
 
+- standard (random_nn, spiking_nn) - **done on David PC** 
+- standard (random, levy, uniform) - **done on OMEN**
+
+This is what we are going to compare against. 
+
 # Dir Structure 
 We want to have the following folder structure for experiments
+```
 experiments
     <variable>
         <variable value 1>
@@ -64,9 +75,9 @@ experiments
             <strategy 3>
             <strategy 4>
             <strategy 5>
-
+```
 eg 
-
+```
 experiments 
     steps
         100/
@@ -119,15 +130,16 @@ experiments
             nn_random 
             nn_spiking 
 
-
+```
 
 # To-do 
-Try do pending experiment for spiking_nn with a 10_000 population. It was taking too long on my computer. 
+Try do pending experiment for spiking_nn with a 10_000 population. It was taking too long on my (David's) computer. 
 
 Let's complete: 
-- mutation rate 
-- mutation magnitude 
+- ~~standard~~ 
+- ~~mutation rate~~ 
+- ~~mutation magnitude~~ 
 - steps 
-- population 
+- ~~population~~ 
 
 Then proceed to others 

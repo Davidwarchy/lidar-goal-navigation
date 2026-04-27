@@ -194,6 +194,12 @@ def parse_args():
                         help="Device to run on (cuda or cpu)")
     parser.add_argument("--mutation_mag", type=float, default=0.5,
                     help="Mutation magnitude for genetic algorithm")
+    parser.add_argument(
+        "--goal_spawn_dist",
+        type=float,
+        default=30.0,
+        help="Initial distance from robot spawn to goal (default: 30.0)"
+    )
 
     return parser.parse_args()
 
@@ -252,8 +258,8 @@ def main():
         "use_lut": args.use_lut,
         "continue_after_goal": args.continue_after_goal,
         "verbose": args.verbose,
-        "device": args.device
-        # Note: output_dir will be added per trial inside worker
+        "device": args.device, 
+        "goal_spawn_dist": args.goal_spawn_dist
     }
     
     # Load strategy
@@ -297,3 +303,4 @@ if __name__ == "__main__":
 # --- PARALLEL TRIALS ---
 # python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png
 # 
+# python main.py --strategy spiking --trials 1 --generations 2 --population 100 
