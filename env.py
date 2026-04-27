@@ -220,13 +220,38 @@ class VectorRobotExplorationEnv:
         return self.distance_map[iy, ix] >= self.robot_radius
 
     def _spawn_reward(self, start_x, start_y, distance):
+        # ---- 1. sanity check: is the radius even possible in the map? ----
+        if distance <= 0:
+            raise ValueError("Distance must be positive")
+
+        max_radius = min(
+            start_x, self.map_width - start_x,
+            start_y, self.map_height - start_y
+        )
+
+        if distance > max_radius:
+            raise ValueError(
+                f"Distance {distance} is too large for map bounds. "
+                f"Max feasible radius from start is {max_radius}."
+            )
+
+        # ---- 2. sampling attempts ----
         for _ in range(200):
             angle = np.random.uniform(0, 2 * np.pi)
-            tx, ty = start_x + distance * np.cos(angle), start_y + distance * np.sin(angle)
+            tx = start_x + distance * np.cos(angle)
+            ty = start_y + distance * np.sin(angle)
+
             ix, iy = int(round(tx)), int(round(ty))
-            if (0 <= ix < self.map_width and 0 <= iy < self.map_height and self.obstacle_map[iy, ix] == 0):
+
+            if (0 <= ix < self.map_width and
+                0 <= iy < self.map_height and
+                self.obstacle_map[iy, ix] == 0):
                 return tx, ty
-        return start_x, start_y
+
+        # ---- 3. failure case ----
+        raise RuntimeError(
+            f"Failed to spawn reward after 200 attempts at distance {distance}"
+        )
 
     def step(self, actions, action_space="discrete"):
         """
