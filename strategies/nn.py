@@ -388,7 +388,30 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
     
     else:
         raise ValueError(f"Unknown network type: {network_type}. Choose from 'spiking' or 'feedforward'")
+    
 
+# ---------------------------------------------------------------------------
+# Recombination Function (Crossover) for Genetic Algorithm
+# ---------------------------------------------------------------------------
+def _average_recombination(genomes: torch.Tensor) -> torch.Tensor:
+    """
+    Pairwise average recombination.
+    Input: (population_size, total_params)
+    Output: same shape, where each pair of consecutive individuals is replaced
+            by their element-wise average (both children become that average).
+    If population_size is odd, the last individual is left unchanged.
+    """
+    pop_size = genomes.shape[0]
+    if pop_size < 2:
+        return genomes
+    # Make even number of individuals for pairing
+    even_pop = pop_size if pop_size % 2 == 0 else pop_size - 1
+    if even_pop > 0:
+        # Pair consecutive indices: (0,1), (2,3), ...
+        paired = genomes[:even_pop].view(-1, 2, genomes.shape[-1])
+        avg = paired.mean(dim=1, keepdim=True)          # (pairs, 1, params)
+        paired[:] = avg.expand_as(paired)               # both children = average
+    return genomes
 
 # ---------------------------------------------------------------------------
 # Helper function for parallel trial execution (used when parallel_trials=True)
@@ -619,18 +642,23 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         with torch.no_grad():
             if len(survivor_indices) > 0:
                 # Get genomes of survivors as a 2D tensor
-                survivor_genomes = pop_brain.get_weights()[survivor_indices]  # (n_survivors, total_params)
+                survivor_genomes = pop_brain.get_weights()[survivor_indices]
 
-                # Select parents with replacement
+                # Get `population_size` random indices from survivors
                 parent_idx = torch.randint(0, len(survivor_indices), (strategy_params['population_size'],), device=device)
+
+                # Clone the selected genomes to create `population_size` children
                 child_genomes = survivor_genomes[parent_idx].clone()
+
+                # --- Add recombination (averaging) here ---
+                if strategy_params['recombination_enabled']:
+                    child_genomes = _average_recombination(child_genomes)
 
                 # Vectorised mutation
                 mutation_mask = torch.rand_like(child_genomes) < strategy_params['mutation_rate']
                 noise = torch.randn_like(child_genomes) * strategy_params['mutation_mag']
                 child_genomes[mutation_mask] += noise[mutation_mask]
 
-                # Assign back to the population
                 pop_brain.set_weights(child_genomes)
     
     # Optional: clear GPU cache after trial to free memory
@@ -644,8 +672,14 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
 # ---------------------------------------------------------------------------
 
 class NNStrategy(BaseStrategy):
-    def __init__(self, population_size=50, generations=20, num_trials=3, 
-                mutation_rate=0.2, mutation_mag=0.5, max_samples_per_gen=10,
+    def __init__(self, 
+                num_trials=3, 
+                generations=20, 
+                population_size=50, 
+                mutation_rate=0.2, 
+                mutation_mag=0.5, 
+                recombination_enabled=False,
+                max_samples_per_gen=10,
                 network_type="spiking",
                 save_top_k=0,
                 curriculum_enabled=False,
@@ -682,6 +716,7 @@ class NNStrategy(BaseStrategy):
         self.num_trials = num_trials
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
+        self.recombination_enabled = recombination_enabled
         self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params
@@ -702,6 +737,7 @@ class NNStrategy(BaseStrategy):
             'num_trials': self.num_trials,
             'mutation_rate': self.mutation_rate,
             'mutation_mag': self.mutation_mag,
+            "recombination_enabled": self.recombination_enabled,
             'max_samples_per_gen': self.max_samples_per_gen,
             'network_type': self.network_type,
             'network_params': self.network_params,

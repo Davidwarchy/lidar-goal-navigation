@@ -22,6 +22,7 @@ def load_strategy(name,
                   population_size=100, 
                   mutation_rate=0.1,
                   mutation_mag=0.5,
+                  recombination=False,
                   load_weights=False,
                   weights_dir="weights",
                   ga_curriculum_enabled=False,
@@ -70,6 +71,7 @@ def load_strategy(name,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
             mutation_mag=mutation_mag,
+            recombination_enabled=recombination,
             network_type="spiking",
             action_space=action_space,  
             action_distribution=action_distribution, 
@@ -86,6 +88,7 @@ def load_strategy(name,
             num_trials=num_trials,
             mutation_rate=mutation_rate,
             mutation_mag=mutation_mag,
+            recombination_enabled=recombination,
             network_type="feedforward",
             curriculum_enabled=ga_curriculum_enabled,
             curriculum_success_threshold=ga_curriculum_success_threshold,
@@ -200,6 +203,8 @@ def parse_args():
         default=30.0,
         help="Initial distance from robot spawn to goal (default: 30.0)"
     )
+    parser.add_argument("--recombination", action="store_true",
+                    help="Enable simple average recombination (crossover) in genetic algorithm")
 
     return parser.parse_args()
 
@@ -270,6 +275,7 @@ def main():
         num_trials=args.trials,
         mutation_rate=args.mutation_rate,
         mutation_mag=args.mutation_mag,
+        recombination=args.recombination,        
         alpha=args.alpha,
         min_step=args.min_step,
         max_step=args.max_step_len,
