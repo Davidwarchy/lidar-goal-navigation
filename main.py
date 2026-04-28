@@ -23,6 +23,7 @@ def load_strategy(name,
                   mutation_rate=0.1,
                   mutation_mag=0.5,
                   recombination=False,
+                  lif_steps=5, 
                   load_weights=False,
                   weights_dir="weights",
                   ga_curriculum_enabled=False,
@@ -72,6 +73,7 @@ def load_strategy(name,
             mutation_rate=mutation_rate,
             mutation_mag=mutation_mag,
             recombination_enabled=recombination,
+            n_steps=lif_steps,
             network_type="spiking",
             action_space=action_space,  
             action_distribution=action_distribution, 
@@ -205,6 +207,8 @@ def parse_args():
     )
     parser.add_argument("--recombination", action="store_true",
                     help="Enable simple average recombination (crossover) in genetic algorithm")
+    parser.add_argument("--lif_steps", type=int, default=5,
+                    help="Number of internal timesteps for spiking LIF neurons (default 5)")
 
     return parser.parse_args()
 
@@ -275,7 +279,8 @@ def main():
         num_trials=args.trials,
         mutation_rate=args.mutation_rate,
         mutation_mag=args.mutation_mag,
-        recombination=args.recombination,        
+        recombination=args.recombination,
+        lif_steps=args.lif_steps,        
         alpha=args.alpha,
         min_step=args.min_step,
         max_step=args.max_step_len,

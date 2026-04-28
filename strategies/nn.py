@@ -431,6 +431,7 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         strategy_params['population_size'],
         env.num_rays,
         4,  # 4 actions
+        n_steps=strategy_params['n_steps'],
         device=device,
         **strategy_params['network_params']
     )
@@ -679,6 +680,7 @@ class NNStrategy(BaseStrategy):
                 mutation_rate=0.2, 
                 mutation_mag=0.5, 
                 recombination_enabled=False,
+                n_steps = 5,
                 max_samples_per_gen=10,
                 network_type="spiking",
                 save_top_k=0,
@@ -698,6 +700,8 @@ class NNStrategy(BaseStrategy):
             "num_trials": num_trials,
             "mutation_rate": mutation_rate,
             "mutation_mag": mutation_mag,
+            "recombination_enabled": recombination_enabled,
+            "n_steps": n_steps,
             "max_samples_per_gen": max_samples_per_gen,
             "network_type": network_type,
             "save_top_k": save_top_k,
@@ -717,6 +721,7 @@ class NNStrategy(BaseStrategy):
         self.mutation_rate = mutation_rate
         self.mutation_mag = mutation_mag
         self.recombination_enabled = recombination_enabled
+        self.n_steps = n_steps
         self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params
@@ -738,6 +743,7 @@ class NNStrategy(BaseStrategy):
             'mutation_rate': self.mutation_rate,
             'mutation_mag': self.mutation_mag,
             "recombination_enabled": self.recombination_enabled,
+            "n_steps": self.n_steps,
             'max_samples_per_gen': self.max_samples_per_gen,
             'network_type': self.network_type,
             'network_params': self.network_params,

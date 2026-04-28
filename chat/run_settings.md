@@ -12,8 +12,10 @@ We want to have the following standard for the configuration tests
 
 We are going to test these configurations. 
 
-## Generations 
-- We did for 1,000 generations and observed that there's little change after 200 generations, so we decided to use this as the base. 
+## Generations (**Done on David PC**)
+- We did for about [500 generations](output/experiments/standard/random_nn/2026-04-21-214740_random_nn) and observed that there's little change after 200 generations, so we decided to use this as the base. 
+
+- The folder is in David's local machine, and might not be accessible from here. 
 
 ## Time 
 Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**) 
@@ -22,7 +24,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 ## Natural Selection 
 - Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75 (**Done on OMEN**)
 - Mutation magnitude - 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0 (**Done on OMEN**)
-- Recombination - True, False 
+- Recombination - True, False (**Running on Kaggle - 1davidwarutumo**)
 
 --- 
 ## Network architecture
@@ -32,7 +34,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 
 --- 
 ## Difficulty 
-- Goal difficulty - 10, 30, 50, 70 (**Running on Kaggle**)
+- Goal difficulty - 10, 30, 50, 70 (**Running on Kaggle - davidwarchy**)
 
 --- 
 ## Other factors 
