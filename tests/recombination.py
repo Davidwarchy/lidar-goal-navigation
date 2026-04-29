@@ -33,6 +33,7 @@ def run(strategy, recombination_enabled):
         cmd.append("--recombination")
 
     print(f"\n[RUN] recombination={recombination_enabled} | strategy={strategy}")
+    print(f"  Command: {' '.join(cmd)}")
     print(f"  Output: {out_dir}")
     result = subprocess.run(cmd)
 

@@ -30,7 +30,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 ## Network architecture
 - Network architecture - ? 
 - Hidden layer size - ? 
-- LIF timesteps - 1, 2, 5, 10
+- LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on David PC; 10 Running on [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
 
 --- 
 ## Difficulty 
@@ -39,8 +39,8 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 --- 
 ## Other factors 
 
-- Robot size - 1, 3, 5 (Peter)
-- Cirriculum learning - on, off (Peter)
+- Robot size - 1, 3, 5 (**Peter**)
+- Cirriculum learning - on, off (**Peter**)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
@@ -49,7 +49,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 - Determinism/Stochasticity - on, off 
 
 ## Fitness Function 
-- Fitness function - none, health, energy (Peter)
+- Fitness function - none, health, energy (**Peter**)
 
 This is what we are going to compare against. 
 
