@@ -22,3 +22,6 @@ My theory is that we are creating a system that's capable of SEARCH. And dependi
 
 We don't have any feedback for fitness in real evolution. 
 
+
+https://claude.ai/share/a312720d-1d92-4da6-ab05-bbe69a0d6717 / https://claude.ai/chat/1e48324f-d4e1-4b3b-bffc-e364551ba240 has a good comparison 
+https://claude.ai/chat/9c4913cf-beb2-4b83-be3a-5da41d0487b1 it might be nice to have a good look at this 

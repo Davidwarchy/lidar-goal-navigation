@@ -24,17 +24,17 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 ## Natural Selection 
 - Mutation rate - 0.05, 0.1, 0.3, 0.5, 0.75 (**Done on OMEN**)
 - Mutation magnitude - 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0 (**Done on OMEN**)
-- Recombination - True, False (**Running on Kaggle - 1davidwarutumo**)
+- Recombination - True, False (**Done on Kaggle**)
 
 --- 
 ## Network architecture
 - Network architecture - ? 
 - Hidden layer size - ? 
-- LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on David PC; 10 Running on [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
+- LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on David PC; 10 Done on [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
 
 --- 
 ## Difficulty 
-- Goal difficulty - 10, 30, 50, 70 (**Running on Kaggle - davidwarchy**)
+- Goal distance - 10, 20, 30, 40  (**Running on Kaggle - davidwarchy**)
 
 --- 
 ## Other factors 
@@ -52,6 +52,9 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 - Fitness function - none, health, energy (**Peter**)
 
 This is what we are going to compare against. 
+
+## Further Considerations 
+https://gemini.google.com/share/16047d46abf0 - other maps, multiple maps; sensory impairments, sensor noise, 
 
 # Dir Structure 
 We want to have the following folder structure for experiments
