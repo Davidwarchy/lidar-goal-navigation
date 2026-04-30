@@ -1,6 +1,9 @@
 """
-Logging mixin for strategies – no per‑step logging.
-Success data is collected in GPU tensors and written at generation end.
+Logging mixin for strategies – clean hierarchical logging.
+- Run level: metadata.json (already created by main.py)
+- Trial level: trial_metadata.json, trial_summary.csv (includes curriculum)
+- Generation level: log.json, agent_stats.csv
+- No per-step logging, no duplicate files
 """
 
 import os
@@ -15,7 +18,7 @@ import torch
 class StrategyLoggingMixin:
     """
     Mixin class that adds logging capabilities to any strategy.
-    Does NOT log per‑step data. Only generation summaries and agent success stats.
+    Provides clean, organized logging without per-step overhead.
     """
     
     def setup_trial_logging(self, env, trial_num, total_trials, max_generations=None):
@@ -38,7 +41,7 @@ class StrategyLoggingMixin:
         self.trial_dir = env.output_dir
         os.makedirs(self.trial_dir, exist_ok=True)
         
-        # Trial-level metadata
+        # Trial-level metadata (only one metadata file per trial)
         self.trial_metadata = {
             "run_datetime": datetime.now().isoformat(),
             "strategy_name": self.name,
@@ -48,6 +51,7 @@ class StrategyLoggingMixin:
             "num_envs": env.num_envs,
             "max_steps": env.max_steps,
             "continue_after_goal": env.continue_after_goal,
+            "initial_goal_spawn_distance": env.goal_spawn_dist,
             "environment_parameters": {
                 "grid_width": env.grid_width,
                 "grid_height": env.grid_height,
@@ -56,10 +60,14 @@ class StrategyLoggingMixin:
                 "ray_length": env.ray_length,
                 "map_image": os.path.basename(env.map_image_path),
                 "use_lut": env.use_lut
-            }
+            },
+            "curriculum_enabled": False,  # Override in subclasses if needed
+            "curriculum_success_threshold": None,
+            "curriculum_consecutive_gens": None,
+            "curriculum_distance_increment": None
         }
         
-        # Save trial metadata
+        # Save trial metadata to trial_metadata.json (single source)
         metadata_path = os.path.join(self.trial_dir, "trial_metadata.json")
         with open(metadata_path, 'w') as f:
             json.dump(self.trial_metadata, f, indent=4)
@@ -72,13 +80,35 @@ class StrategyLoggingMixin:
                 "generation", "success_rate_percent", "num_successful", 
                 "avg_path_length", "avg_energy_remaining", "avg_health_remaining",
                 "avg_initial_distance_to_reward", "gen_duration_seconds", 
-                "total_steps_in_gen", "extinct"
+                "total_steps_in_gen", "extinct", "goal_spawn_distance",
+                "curriculum_streak", "curriculum_promoted"
             ])
         
-        # Track trial-level stats
         self.trial_start_time = time.time()
         self.trial_generations_completed = 0
         self.trial_extinct = False
+        self.trial_curriculum_streak = 0
+        self.trial_goal_distance_history = []  # Track goal distance over generations
+    
+    def set_curriculum_params(self, enabled, success_threshold, consecutive_gens, distance_increment):
+        """
+        Set curriculum parameters for the trial (called by strategies that use curriculum).
+        
+        Args:
+            enabled: bool
+            success_threshold: float (e.g., 0.05 for 5%)
+            consecutive_gens: int
+            distance_increment: float
+        """
+        self.trial_metadata["curriculum_enabled"] = enabled
+        self.trial_metadata["curriculum_success_threshold"] = success_threshold
+        self.trial_metadata["curriculum_consecutive_gens"] = consecutive_gens
+        self.trial_metadata["curriculum_distance_increment"] = distance_increment
+        
+        # Update trial_metadata.json
+        metadata_path = os.path.join(self.trial_dir, "trial_metadata.json")
+        with open(metadata_path, 'w') as f:
+            json.dump(self.trial_metadata, f, indent=4)
     
     def setup_generation_logging(self, env, generation_num):
         """
@@ -108,15 +138,14 @@ class StrategyLoggingMixin:
         self.gen_start_time = time.time()
         self.gen_initial_distances = []
         
-        # We'll store initial distances as a list (CPU) – done once per generation
+        # Track successes across trial
         if not hasattr(self, 'trial_goals_reached'):
             self.trial_goals_reached = set()
             self.trial_agent_success_data = {}
     
     def _log_initial_agent_data(self, env):
         """
-        Log initial positions and distances for all agents in this generation.
-        
+        Log initial positions and distances for all agents.
         Args:
             env: The environment
         """
@@ -136,25 +165,30 @@ class StrategyLoggingMixin:
             ])
         self.agent_stats_file.flush()
     
-    def finalize_generation(self, env, reached_goal, success_steps, success_energy, success_health):
+    def finalize_generation(self, env, reached_goal, success_steps, success_energy, success_health, 
+                           curriculum_streak=None, curriculum_promoted=False):
         """
-        Called at the end of a generation with GPU tensors of success data.
-        Writes agent stats and generation summary.
+        Called at generation end with GPU tensors. Writes all logs.
         
         Args:
             env: The environment
             reached_goal: (num_envs,) bool tensor on GPU
-            success_steps: (num_envs,) long tensor on GPU (steps when success, -1 if never)
+            success_steps: (num_envs,) long tensor on GPU
             success_energy: (num_envs,) float tensor on GPU
             success_health: (num_envs,) float tensor on GPU
+            curriculum_streak: int (if using curriculum, otherwise None)
+            curriculum_promoted: bool (if curriculum was promoted this generation)
+        
+        Returns:
+            bool: True if there were survivors
         """
         gen_duration = time.time() - self.gen_start_time
         
-        # Get indices of successful agents
+        # Get successful agents
         survivor_indices_gpu = torch.where(reached_goal)[0]
         survivor_indices = survivor_indices_gpu.cpu().numpy()
         
-        # Write agent stats for successful agents (overwrite the initial False rows)
+        # Write success rows to agent_stats (one per successful agent)
         for idx in survivor_indices:
             steps = success_steps[idx].item()
             energy = success_energy[idx].item()
@@ -165,7 +199,6 @@ class StrategyLoggingMixin:
             self.agent_writer.writerow([
                 idx, True, steps, energy, health, init_dist
             ])
-        self.agent_stats_file.flush()
         self.agent_stats_file.close()
         
         # Calculate generation statistics
@@ -176,7 +209,22 @@ class StrategyLoggingMixin:
         healths = [success_health[idx].item() for idx in survivor_indices]
         initial_dists = [self.gen_initial_distances[idx] for idx in survivor_indices]
         
-        # Save generation log.json
+        # Get curriculum values
+        if curriculum_streak is None:
+            curriculum_streak_val = 0
+            curriculum_promoted_val = False
+        else:
+            curriculum_streak_val = curriculum_streak
+            curriculum_promoted_val = curriculum_promoted
+            if curriculum_promoted:
+                self.trial_curriculum_streak = 0
+            else:
+                self.trial_curriculum_streak = curriculum_streak
+        
+        # Track goal distance history
+        self.trial_goal_distance_history.append(env.goal_spawn_dist)
+        
+        # Generation log.json (includes curriculum info)
         gen_stats = {
             "generation": self.generation_num,
             "trial": self.trial_num,
@@ -190,13 +238,16 @@ class StrategyLoggingMixin:
             "avg_initial_distance_to_reward": float(np.mean(initial_dists)) if initial_dists else 0,
             "generation_duration_seconds": gen_duration,
             "total_steps_in_gen": env.current_step,
-            "extinct": len(survivor_indices) == 0
+            "extinct": len(survivor_indices) == 0,
+            "goal_spawn_distance": float(env.goal_spawn_dist),
+            "curriculum_streak": int(curriculum_streak_val),
+            "curriculum_promoted": bool(curriculum_promoted_val)
         }
         
         with open(os.path.join(self.gen_dir, "log.json"), 'w') as f:
             json.dump(gen_stats, f, indent=2)
         
-        # Append to trial summary CSV
+        # Append to trial summary CSV (includes curriculum columns)
         with open(self.trial_summary_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([
@@ -206,7 +257,10 @@ class StrategyLoggingMixin:
                 f"{np.mean(healths) if healths else 0:.2f}",
                 f"{np.mean(initial_dists) if initial_dists else 0:.2f}",
                 f"{gen_duration:.2f}", env.current_step,
-                len(survivor_indices) == 0
+                len(survivor_indices) == 0,
+                f"{env.goal_spawn_dist:.2f}",
+                curriculum_streak_val,
+                "yes" if curriculum_promoted_val else "no"
             ])
         
         # Update trial tracking
@@ -225,13 +279,11 @@ class StrategyLoggingMixin:
     def _log_trial_complete(self, env):
         """
         Log trial completion and save final statistics.
-        
         Args:
             env: The environment
         """
         trial_duration = time.time() - self.trial_start_time
         
-        # Trial summary
         trial_summary = {
             "trial_number": self.trial_num,
             "total_trials": self.total_trials,
@@ -241,7 +293,10 @@ class StrategyLoggingMixin:
             "trial_duration_seconds": trial_duration,
             # Convert NumPy types to standard Python types here:
             "unique_successful_agents": int(len(self.trial_goals_reached)),
-            "successful_agents_across_trial": [int(idx) for idx in self.trial_goals_reached]
+            "successful_agents_across_trial": [int(idx) for idx in self.trial_goals_reached],
+            "final_curriculum_streak": self.trial_curriculum_streak,
+            "final_goal_distance": env.goal_spawn_dist,
+            "goal_distance_history": self.trial_goal_distance_history
         }
         
         # Calculate trial-level success metrics
@@ -254,23 +309,20 @@ class StrategyLoggingMixin:
             trial_summary["avg_success_energy"] = float(np.mean(energies))
             trial_summary["avg_success_health"] = float(np.mean(healths))
         
-        with open(os.path.join(self.trial_dir, "trial_complete.json"), 'w') as f:
-            json.dump(trial_summary, f, indent=4)
+        # Update trial_metadata.json with completion info
+        self.trial_metadata["completed_generations"] = self.trial_generations_completed
+        self.trial_metadata["extinct"] = self.trial_extinct
+        self.trial_metadata["trial_duration_seconds"] = trial_duration
+        self.trial_metadata["unique_successful_agents"] = int(len(self.trial_goals_reached))
+        self.trial_metadata["final_goal_distance"] = env.goal_spawn_dist
+        self.trial_metadata["goal_distance_history"] = self.trial_goal_distance_history
         
-        # Human-readable trial summary
-        with open(os.path.join(self.trial_dir, "trial_summary.txt"), 'w') as f:
-            f.write(f"=== Trial {self.trial_num}/{self.total_trials} Summary ===\n")
-            f.write(f"Strategy: {self.trial_metadata['strategy_name']}\n")
-            f.write(f"Duration: {trial_duration:.2f} seconds\n")
-            f.write(f"Generations Completed: {self.trial_generations_completed}\n")
-            f.write(f"Max Generations: {self.max_generations if self.max_generations else 'Unlimited'}\n")
-            f.write(f"Extinct: {self.trial_extinct}\n")
-            f.write(f"Unique Successful Agents: {len(self.trial_goals_reached)}\n")
-            if self.trial_agent_success_data:
-                f.write(f"Avg Success Steps: {trial_summary.get('avg_success_steps', 0):.2f}\n")
-                f.write(f"Avg Success Energy Remaining: {trial_summary.get('avg_success_energy', 0):.2f}\n")
-                f.write(f"Avg Success Health Remaining: {trial_summary.get('avg_success_health', 0):.2f}\n")
+        with open(os.path.join(self.trial_dir, "trial_metadata.json"), 'w') as f:
+            json.dump(self.trial_metadata, f, indent=4)
         
         print(f"\n[TRIAL {self.trial_num}/{self.total_trials}] Complete. "
               f"Generations: {self.trial_generations_completed}, "
               f"Successful agents: {len(self.trial_goals_reached)}")
+        
+        if self.trial_metadata.get("curriculum_enabled", False):
+            print(f"  Curriculum: Final goal distance = {env.goal_spawn_dist:.2f}")

@@ -30,6 +30,15 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
     # Set up trial logging using the strategy instance (which has the mixin)
     strategy_instance.setup_trial_logging(env, trial_idx, strategy_params['num_trials'], strategy_params['max_gens'])
     
+    # Set curriculum parameters if enabled
+    if strategy_params['curriculum_enabled']:
+        strategy_instance.set_curriculum_params(
+            enabled=True,
+            success_threshold=strategy_params['curriculum_success_threshold'],
+            consecutive_gens=strategy_params['curriculum_consecutive_gens'],
+            distance_increment=strategy_params['curriculum_distance_increment']
+        )
+    
     # Create population using factory
     pop_brain = create_vector_neural_network(
         strategy_params['network_type'],
@@ -134,7 +143,7 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
         
         gen_duration = time.time() - gen_start_time
         
-        # Curriculum logic (unchanged)
+        # Curriculum logic
         curriculum_promoted = False
         curriculum_active = (strategy_params['network_type'] == "feedforward" and strategy_params['curriculum_enabled'])
         success_rate = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
@@ -172,52 +181,12 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
                 with open(weight_path, 'w') as wf:
                     json.dump(weight_data, wf, indent=2)
         
-        # Finalize generation – write all success data at once (mixin writes log.json)
-        has_survivors = strategy_instance.finalize_generation(env, reached_goal, success_steps, success_energy, success_health)
-        
-        # Add curriculum information to the already-written log.json
-        gen_stats_path = os.path.join(gen_dir, "log.json")
-        with open(gen_stats_path, 'r') as f:
-            gen_stats = json.load(f)
-        gen_stats["goal_spawn_distance"] = float(env.goal_spawn_dist)
-        gen_stats["curriculum_streak"] = int(curriculum_streak if curriculum_active else 0)
-        gen_stats["curriculum_promoted"] = bool(curriculum_promoted)
-        gen_stats["device"] = str(device)
-        with open(gen_stats_path, 'w') as f:
-            json.dump(gen_stats, f, indent=2)
-        
-        # Append to trial summary CSV with extra columns
-        trial_summary_path = os.path.join(trial_dir, "summary.csv")
-        file_exists = os.path.exists(trial_summary_path)
-        with open(trial_summary_path, 'a', newline='') as sf:
-            writer = csv.writer(sf)
-            if not file_exists:
-                writer.writerow(["generation", "success_rate_percent", "num_successful", 
-                                "avg_path_length", "avg_energy_remaining", 
-                                "avg_health_remaining", "avg_initial_distance_to_reward",
-                                "gen_duration_seconds", "total_steps_in_gen",
-                                "goal_spawn_distance", "curriculum_streak", "curriculum_promoted"])
-            
-            # Compute averages (convert success_steps to float)
-            if torch.any(reached_goal):
-                avg_steps = success_steps[reached_goal].float().mean().item()
-                avg_energy = success_energy[reached_goal].mean().item()
-                avg_health = success_health[reached_goal].mean().item()
-                avg_init_dist = np.mean([initial_distances[i] for i in torch.where(reached_goal)[0].cpu().numpy()])
-            else:
-                avg_steps = avg_energy = avg_health = avg_init_dist = 0.0
-            
-            writer.writerow([
-                gen, f"{success_rate:.2f}%", int(torch.sum(reached_goal).item()),
-                f"{avg_steps:.2f}",
-                f"{avg_energy:.2f}",
-                f"{avg_health:.2f}",
-                f"{avg_init_dist:.2f}",
-                f"{gen_duration:.2f}", steps,
-                f"{env.goal_spawn_dist:.2f}",
-                curriculum_streak if curriculum_active else 0,
-                "yes" if curriculum_promoted else "no"
-            ])
+        # Finalize generation – pass curriculum info
+        has_survivors = strategy_instance.finalize_generation(
+            env, reached_goal, success_steps, success_energy, success_health,
+            curriculum_streak=curriculum_streak if curriculum_active else None,
+            curriculum_promoted=curriculum_promoted
+        )
         
         gen_pbar.set_postfix({"Success": f"{success_rate:.1f}%", "Total_Steps": steps, "Sec/Gen": f"{gen_duration:.1f}s"})
         
@@ -255,6 +224,7 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
     env.close()
     # Finalize trial logging (mixin)
     strategy_instance._log_trial_complete(env)
+
 
 # ---------------------------------------------------------------------------
 # Neuroevolution Strategy with Extinction Logic (Vectorized)
