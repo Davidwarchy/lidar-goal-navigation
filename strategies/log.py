@@ -95,12 +95,8 @@ class StrategyLoggingMixin:
         self.gen_dir = os.path.join(self.trial_dir, f"gen_{generation_num}")
         os.makedirs(self.gen_dir, exist_ok=True)
         
-        # CSV log for this generation (step-level data)
-        self.step_log_path = os.path.join(self.gen_dir, "step_log.csv")
-        self.step_log_file = open(self.step_log_path, 'w', newline='')
-        step_writer = csv.writer(self.step_log_file)
-        step_writer.writerow(["step", "active_agents", "goals_reached_cumulative", "new_goals_this_step"])
-        self.step_writer = step_writer
+        # In-memory buffer for step logs (to be written once at generation end)
+        self.step_log_data = []
         
         # CSV for per-agent final stats in this generation
         self.agent_stats_path = os.path.join(self.gen_dir, "agent_stats.csv")
@@ -134,23 +130,21 @@ class StrategyLoggingMixin:
     def _log_step(self, step, active_mask, goal_reached_mask, env):
         """
         Log a single step of execution within a generation.
-        
-        Args:
-            step: Current step number
-            active_mask: Boolean array of which agents are still active
-            goal_reached_mask: Boolean array of which agents reached goal this step
-            env: The environment
+        Data is stored in memory; written to disk at generation end.
         """
         active_count = np.sum(active_mask)
-        
-        # Track new goals in this generation
         new_goal_indices = np.where(goal_reached_mask)[0]
+        new_goals_count = len(new_goal_indices)
+        
+        # Store step info in memory buffer
+        self.step_log_data.append([step, active_count, len(self.gen_goals_reached), new_goals_count])
+        
+        # Track which agents reached goal in this generation
         for idx in new_goal_indices:
             if idx not in self.gen_goals_reached:
                 self.gen_goals_reached.add(idx)
             
                 # Store success data for this agent
-                
                 steps = step
                 energy = self._to_python_scalar(env.energy[idx])
                 health = self._to_python_scalar(env.health[idx])
@@ -161,18 +155,12 @@ class StrategyLoggingMixin:
                     "final_health": health
                 }
                 
-                # Write to agent stats CSV immediately
+                # Write to agent stats CSV immediately (low volume, okay)
                 init_dist = self.gen_initial_distances[idx] if idx < len(self.gen_initial_distances) else -1
                 self.agent_writer.writerow([
                     idx, True, steps, energy, health, init_dist
                 ])
                 self.agent_stats_file.flush()
-        
-        # Log step
-        self.step_writer.writerow([
-            step, active_count, len(self.gen_goals_reached), len(new_goal_indices)
-        ])
-        self.step_log_file.flush()
     
     def _log_initial_agent_data(self, env):
         """
@@ -209,8 +197,15 @@ class StrategyLoggingMixin:
         """
         gen_duration = time.time() - self.gen_start_time
         
-        # Close generation file handles
-        self.step_log_file.close()
+        # Write accumulated step log once
+        if self.step_log_data:
+            step_log_path = os.path.join(self.gen_dir, "step_log.csv")
+            with open(step_log_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["step", "active_agents", "goals_reached_cumulative", "new_goals_this_step"])
+                writer.writerows(self.step_log_data)
+        
+        # Close agent stats file
         self.agent_stats_file.close()
         
         # Calculate generation statistics

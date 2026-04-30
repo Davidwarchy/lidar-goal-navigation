@@ -475,73 +475,81 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         success_energy = torch.full((strategy_params['population_size'],), -1.0, dtype=torch.float32, device=device)
         success_health = torch.full((strategy_params['population_size'],), -1.0, dtype=torch.float32, device=device)
         
-        step_csv_path = os.path.join(gen_dir, "log.csv")
-        with open(step_csv_path, 'w', newline='') as step_f:
-            step_writer = csv.writer(step_f)
-            step_writer.writerow(["step", "percent_done", "new_successes"])
-            
-            # Main evaluation loop – wrapped in no_grad to prevent graph buildup
-            with torch.no_grad():
-                while True:
-                    # Normalized observations
-                    normalized_obs = obs / env.ray_length
-                    output = pop_brain.forward(normalized_obs)
-                    
-                    if strategy_params['action_space'] == "discrete":
-                        if strategy_params['action_distribution'] == "deterministic":
-                            actions = torch.argmax(output, dim=1)
-                        else:
-                            exp_output = torch.exp(output - torch.max(output, dim=1, keepdim=True)[0])
-                            probs = exp_output / torch.sum(exp_output, dim=1, keepdim=True)
-                            actions = torch.tensor([np.random.choice(4, p=probs[i].cpu().numpy()) for i in range(len(probs))], device=device)
+        # In-memory buffer for step log (written once at generation end)
+        step_log_buffer = []
+        
+        # Main evaluation loop – wrapped in no_grad to prevent graph buildup
+        with torch.no_grad():
+            while True:
+                # Normalized observations
+                normalized_obs = obs / env.ray_length
+                output = pop_brain.forward(normalized_obs)
+                
+                if strategy_params['action_space'] == "discrete":
+                    if strategy_params['action_distribution'] == "deterministic":
+                        actions = torch.argmax(output, dim=1)
                     else:
-                        linear_vel = output[:, 0]
-                        angular_vel = output[:, 1]
-                        linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
-                        angular_vel = torch.clamp(angular_vel, -1, 1) * 90
-                        actions = torch.stack([linear_vel, angular_vel], dim=1)
-                        if strategy_params['action_distribution'] == "stochastic":
-                            noise_scale = 0.1
-                            actions += torch.randn_like(actions) * noise_scale
-                            actions[:, 0] = torch.clamp(actions[:, 0], -env.linear_speed, env.linear_speed)
-                            actions[:, 1] = torch.clamp(actions[:, 1], -90, 90)
-                    
-                    # Step environment (env.step already uses no_grad internally)
-                    # Convert actions to numpy efficiently
-                    if strategy_params['action_space'] == "discrete":
-                        actions_np = actions.cpu().numpy()
-                    else:
-                        actions_np = actions.cpu().numpy()
-                    
-                    obs_np, rewards_np, dones_np, info = env.step(actions_np, action_space=strategy_params['action_space'])
-                    obs = torch.from_numpy(obs_np).float().to(device)
-                    steps += 1
-                    
-                    # Convert info to tensors
-                    goal_reached_np = info["goal_reached"]
-                    goal_reached = torch.from_numpy(goal_reached_np).bool().to(device) if isinstance(goal_reached_np, np.ndarray) else torch.tensor(goal_reached_np, device=device).bool()
-                    
-                    new_successes = goal_reached & ~reached_goal
-                    new_success_indices = torch.where(new_successes)[0]
-                    for idx in new_success_indices:
-                        reached_goal[idx] = True
-                        success_steps[idx] = steps
-                        success_energy[idx] = env.energy[idx].float() if isinstance(env.energy[idx], torch.Tensor) else torch.tensor(env.energy[idx], device=device).float()
-                        success_health[idx] = env.health[idx].float() if isinstance(env.health[idx], torch.Tensor) else torch.tensor(env.health[idx], device=device).float()
-                    
-                    percent_done = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
-                    step_writer.writerow([steps, f"{percent_done:.2f}%", len(new_success_indices)])
-                    step_f.flush()
-                    
-                    if steps % 10 == 0:
-                        gen_pbar.set_postfix({"Step": steps, "%Done": f"{percent_done:.1f}%"})
-                    
-                    if env.render_flag:
-                        env.render()
-                    
-                    dones = torch.from_numpy(dones_np).bool().to(device) if isinstance(dones_np, np.ndarray) else torch.tensor(dones_np, device=device).bool()
-                    if torch.all(dones):
-                        break
+                        exp_output = torch.exp(output - torch.max(output, dim=1, keepdim=True)[0])
+                        probs = exp_output / torch.sum(exp_output, dim=1, keepdim=True)
+                        actions = torch.tensor([np.random.choice(4, p=probs[i].cpu().numpy()) for i in range(len(probs))], device=device)
+                else:
+                    linear_vel = output[:, 0]
+                    angular_vel = output[:, 1]
+                    linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
+                    angular_vel = torch.clamp(angular_vel, -1, 1) * 90
+                    actions = torch.stack([linear_vel, angular_vel], dim=1)
+                    if strategy_params['action_distribution'] == "stochastic":
+                        noise_scale = 0.1
+                        actions += torch.randn_like(actions) * noise_scale
+                        actions[:, 0] = torch.clamp(actions[:, 0], -env.linear_speed, env.linear_speed)
+                        actions[:, 1] = torch.clamp(actions[:, 1], -90, 90)
+                
+                # Step environment (env.step already uses no_grad internally)
+                # Convert actions to numpy efficiently
+                if strategy_params['action_space'] == "discrete":
+                    actions_np = actions.cpu().numpy()
+                else:
+                    actions_np = actions.cpu().numpy()
+                
+                obs_np, rewards_np, dones_np, info = env.step(actions_np, action_space=strategy_params['action_space'])
+                obs = torch.from_numpy(obs_np).float().to(device)
+                steps += 1
+                
+                # Convert info to tensors
+                goal_reached_np = info["goal_reached"]
+                goal_reached = torch.from_numpy(goal_reached_np).bool().to(device) if isinstance(goal_reached_np, np.ndarray) else torch.tensor(goal_reached_np, device=device).bool()
+                
+                new_successes = goal_reached & ~reached_goal
+                new_success_indices = torch.where(new_successes)[0]
+                for idx in new_success_indices:
+                    reached_goal[idx] = True
+                    success_steps[idx] = steps
+                    success_energy[idx] = env.energy[idx].float() if isinstance(env.energy[idx], torch.Tensor) else torch.tensor(env.energy[idx], device=device).float()
+                    success_health[idx] = env.health[idx].float() if isinstance(env.health[idx], torch.Tensor) else torch.tensor(env.health[idx], device=device).float()
+                
+                percent_done = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
+                
+                # Buffer step info for later batch write
+                step_log_buffer.append([steps, f"{percent_done:.2f}%", len(new_success_indices)])
+                
+                # Only update tqdm every 100 steps (or every step if verbose)
+                if env.verbose or (steps % 100 == 0):
+                    gen_pbar.set_postfix({"Step": steps, "%Done": f"{percent_done:.1f}%"})
+                
+                if env.render_flag:
+                    env.render()
+                
+                dones = torch.from_numpy(dones_np).bool().to(device) if isinstance(dones_np, np.ndarray) else torch.tensor(dones_np, device=device).bool()
+                if torch.all(dones):
+                    break
+        
+        # Write step log once at generation end
+        if step_log_buffer:
+            step_csv_path = os.path.join(gen_dir, "log.csv")
+            with open(step_csv_path, 'w', newline='') as step_f:
+                step_writer = csv.writer(step_f)
+                step_writer.writerow(["step", "percent_done", "new_successes"])
+                step_writer.writerows(step_log_buffer)
         
         gen_duration = time.time() - gen_start_time
         survivor_indices = torch.where(reached_goal)[0]

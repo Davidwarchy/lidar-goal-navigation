@@ -106,11 +106,13 @@ class LevyWalkStrategy(BaseStrategy, StrategyLoggingMixin):
                     env.render()
                 
                 percent_done = (torch.sum(goal_reached).item() / env.num_envs) * 100
-                gen_pbar.set_postfix({
-                    "Gen": generation, 
-                    "Step": env.current_step, 
-                    "Success": f"{percent_done:.1f}%"
-                })
+                # Only update tqdm every 100 steps (or every step if verbose)
+                if env.verbose or (env.current_step % 100 == 0):
+                    gen_pbar.set_postfix({
+                        "Gen": generation, 
+                        "Step": env.current_step, 
+                        "Success": f"{percent_done:.1f}%"
+                    })
             
             # Log generation completion
             has_survivors = self._log_generation_complete(env)
