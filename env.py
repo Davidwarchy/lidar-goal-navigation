@@ -1,5 +1,3 @@
-#### .\env.py
-# env.py - Fixed version with correct PyTorch functions
 import torch
 import torch.nn.functional as F
 import sys
@@ -264,6 +262,13 @@ class VectorRobotExplorationEnv:
             For continuous: (num_envs, 2) tensor of [linear_velocity, angular_velocity]
         action_space : str
             "discrete" or "continuous"
+        
+        Returns:
+        --------
+        obs : torch.Tensor (num_envs, num_rays) on GPU
+        rewards : torch.Tensor (num_envs) on GPU
+        done : torch.Tensor (num_envs) bool on GPU
+        info : dict with 'goal_reached' as GPU tensor
         """
         with torch.no_grad():
             # Convert actions to torch tensor on device if needed
@@ -306,7 +311,7 @@ class VectorRobotExplorationEnv:
             self._update_robot_positions(v_left, v_right)
             
             # Get Perception
-            obs = self._get_observation()
+            obs = self._get_observation()   # GPU tensor
 
             # Check for Success (Goal reached)
             dx = self.robot_x - self.goal_x
@@ -335,11 +340,8 @@ class VectorRobotExplorationEnv:
             self.current_step += 1
             self.done = self.done | new_dones
 
-        # Convert rewards to CPU for return (if needed for non-GPU code)
-        rewards_cpu = rewards.cpu().numpy() if rewards.is_cuda else rewards.numpy()
-        done_cpu = self.done.cpu().numpy() if self.done.is_cuda else self.done.numpy()
-        
-        return obs, rewards_cpu, done_cpu, {"goal_reached": goal_reached.cpu().numpy() if goal_reached.is_cuda else goal_reached.numpy()}
+        # Return all as GPU tensors
+        return obs, rewards, self.done, {"goal_reached": goal_reached}
 
     def _update_robot_positions(self, v_left, v_right):
         with torch.no_grad():
@@ -377,7 +379,8 @@ class VectorRobotExplorationEnv:
     def _get_observation(self):
         """
         Get LIDAR distances for the entire population. 
-        Prioritizes the O(1) LUT but falls back to vectorized ray marching.
+        Prioritises the O(1) LUT but falls back to vectorized ray marching.
+        Returns GPU tensor of shape (num_envs, num_rays).
         """
         if self.use_lut and self.lidar_lut is not None:
             with torch.no_grad():
@@ -394,11 +397,9 @@ class VectorRobotExplorationEnv:
                 angles = (self.robot_orientation[:, None] + self.lidar_angles) % 360
                 angle_idxs = angles.long()
                 
-                # 3. Vectorized LUT retrieval into pre‑allocated buffer
-                # We use advanced indexing to pull distances for all robots at once
+                # Direct GPU indexing into LUT
                 self._lidar_distances[:] = self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
-                # Return CPU copy (the GPU buffer is reused next time)
-                return self._lidar_distances.cpu().numpy()
+                return self._lidar_distances   # GPU tensor
 
         # FALLBACK: Vectorized Ray Marching (if LUT is not used/available)
         # Raise warning if LUT was intended but not loaded
@@ -411,6 +412,7 @@ class VectorRobotExplorationEnv:
         """
         Computes LIDAR for all robots simultaneously without a LUT.
         Complexity: O(num_envs * num_rays * ray_length)
+        Returns GPU tensor.
         """
         with torch.no_grad():
             # Create ray steps on GPU
@@ -446,8 +448,7 @@ class VectorRobotExplorationEnv:
             # Final distances: use hit index or default to max ray_length
             distances = hit_indices.float()
             distances[no_hits] = float(self.ray_length)
-            
-            return distances.cpu().numpy()
+            return distances
 
     def render(self):
         if not self.render_flag: return

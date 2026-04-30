@@ -69,18 +69,25 @@ class LevyWalkStrategy(BaseStrategy, StrategyLoggingMixin):
             # Per-agent state
             steps_left = torch.tensor(self._sample_pareto(env.num_envs), device=env.device)
             direction = torch.randint(0, 4, (env.num_envs,), device=env.device)
-            # Track which agents have reached goal in this generation
-            goal_reached = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+            
+            # GPU tensors for tracking successes
+            reached_goal = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+            success_steps = torch.full((env.num_envs,), -1, dtype=torch.long, device=env.device)
+            success_energy = torch.full((env.num_envs,), -1.0, dtype=torch.float32, device=env.device)
+            success_health = torch.full((env.num_envs,), -1.0, dtype=torch.float32, device=env.device)
             
             # Run this generation
             while not torch.all(env.done):
-                # Step with current directions
-                actions = direction.cpu().numpy()
-                obs, rewards, dones, info = env.step(actions, action_space="discrete")
-                # Track newly reached goals
-                goal_reached_np = info["goal_reached"]
-                new_goals = torch.from_numpy(goal_reached_np).bool().to(env.device) & ~goal_reached
-                goal_reached = goal_reached | torch.from_numpy(goal_reached_np).bool().to(env.device)
+                obs, rewards, dones, info = env.step(direction, action_space="discrete")
+                
+                # GPU‑only goal tracking
+                new_goals = info["goal_reached"] & ~reached_goal
+                if torch.any(new_goals):
+                    new_indices = torch.where(new_goals)[0]
+                    reached_goal[new_indices] = True
+                    success_steps[new_indices] = env.current_step
+                    success_energy[new_indices] = env.energy[new_indices].float()
+                    success_health[new_indices] = env.health[new_indices].float()
                 
                 # Decrement and check for new runs
                 steps_left -= 1
@@ -94,28 +101,19 @@ class LevyWalkStrategy(BaseStrategy, StrategyLoggingMixin):
                         self._sample_pareto(len(need_new_indices)), device=env.device
                     )
                 
-                # Log this step
-                self._log_step(
-                    env.current_step, 
-                    (~env.done).cpu().numpy(), 
-                    new_goals.cpu().numpy(), 
-                    env
-                )
-                
                 if env.render_flag:
                     env.render()
                 
-                percent_done = (torch.sum(goal_reached).item() / env.num_envs) * 100
-                # Only update tqdm every 100 steps (or every step if verbose)
                 if env.verbose or (env.current_step % 100 == 0):
+                    percent_done = (torch.sum(reached_goal).item() / env.num_envs) * 100
                     gen_pbar.set_postfix({
-                        "Gen": generation, 
-                        "Step": env.current_step, 
+                        "Gen": generation,
+                        "Step": env.current_step,
                         "Success": f"{percent_done:.1f}%"
                     })
             
-            # Log generation completion
-            has_survivors = self._log_generation_complete(env)
+            # Generation ended – now write all success data at once
+            has_survivors = self.finalize_generation(env, reached_goal, success_steps, success_energy, success_health)
             gen_pbar.update(1)
             
             if not has_survivors:

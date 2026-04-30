@@ -129,7 +129,7 @@ def parse_args():
 
     # New Evolutionary/Trial Arguments
     parser.add_argument("--trials", type=int, default=1, help="Number of independent trials") 
-    parser.add_argument("--generations", type=int, default=50, help="Generations per trial") 
+    parser.add_argument("--generations", type=int, default=1, help="Generations per trial") 
 
     # Custom Lévy walk parameters
     parser.add_argument("--alpha", type=float, default=1.6)

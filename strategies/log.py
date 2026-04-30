@@ -1,6 +1,6 @@
 """
-Logging mixin for strategies to provide consistent logging without natural selection.
-Supports trials and generations structure.
+Logging mixin for strategies – no per‑step logging.
+Success data is collected in GPU tensors and written at generation end.
 """
 
 import os
@@ -15,14 +15,13 @@ import torch
 class StrategyLoggingMixin:
     """
     Mixin class that adds logging capabilities to any strategy.
-    Does NOT include natural selection logic - just iteration tracking and logs.
-    Supports multiple trials and generations per trial.
+    Does NOT log per‑step data. Only generation summaries and agent success stats.
     """
     
     def setup_trial_logging(self, env, trial_num, total_trials, max_generations=None):
         """
         Set up logging directories and files for a trial.
-        Assumes env.output_dir is already the trial directory (e.g., base_output_dir/trial_X).
+        Assumes env.output_dir is already the trial directory.
         
         Args:
             env: The environment (has output_dir attribute)
@@ -95,9 +94,6 @@ class StrategyLoggingMixin:
         self.gen_dir = os.path.join(self.trial_dir, f"gen_{generation_num}")
         os.makedirs(self.gen_dir, exist_ok=True)
         
-        # In-memory buffer for step logs (to be written once at generation end)
-        self.step_log_data = []
-        
         # CSV for per-agent final stats in this generation
         self.agent_stats_path = os.path.join(self.gen_dir, "agent_stats.csv")
         self.agent_stats_file = open(self.agent_stats_path, 'w', newline='')
@@ -110,57 +106,12 @@ class StrategyLoggingMixin:
         
         # Track state for this generation
         self.gen_start_time = time.time()
-        self.gen_goals_reached = set()
         self.gen_initial_distances = []
-        self.gen_agent_success_data = {}
         
-        # Also track for trial-level cumulative stats
+        # We'll store initial distances as a list (CPU) – done once per generation
         if not hasattr(self, 'trial_goals_reached'):
             self.trial_goals_reached = set()
             self.trial_agent_success_data = {}
-    
-    def _to_python_scalar(self, value):
-        """Convert torch tensor or numpy array to Python scalar."""
-        if torch.is_tensor(value):
-            return value.item() if value.numel() == 1 else value.cpu().tolist()
-        elif isinstance(value, np.ndarray):
-            return value.item() if value.size == 1 else value.tolist()
-        return value
-    
-    def _log_step(self, step, active_mask, goal_reached_mask, env):
-        """
-        Log a single step of execution within a generation.
-        Data is stored in memory; written to disk at generation end.
-        """
-        active_count = np.sum(active_mask)
-        new_goal_indices = np.where(goal_reached_mask)[0]
-        new_goals_count = len(new_goal_indices)
-        
-        # Store step info in memory buffer
-        self.step_log_data.append([step, active_count, len(self.gen_goals_reached), new_goals_count])
-        
-        # Track which agents reached goal in this generation
-        for idx in new_goal_indices:
-            if idx not in self.gen_goals_reached:
-                self.gen_goals_reached.add(idx)
-            
-                # Store success data for this agent
-                steps = step
-                energy = self._to_python_scalar(env.energy[idx])
-                health = self._to_python_scalar(env.health[idx])
-                
-                self.gen_agent_success_data[idx] = {
-                    "steps_to_success": steps,
-                    "final_energy": energy,
-                    "final_health": health
-                }
-                
-                # Write to agent stats CSV immediately (low volume, okay)
-                init_dist = self.gen_initial_distances[idx] if idx < len(self.gen_initial_distances) else -1
-                self.agent_writer.writerow([
-                    idx, True, steps, energy, health, init_dist
-                ])
-                self.agent_stats_file.flush()
     
     def _log_initial_agent_data(self, env):
         """
@@ -185,36 +136,44 @@ class StrategyLoggingMixin:
             ])
         self.agent_stats_file.flush()
     
-    def _log_generation_complete(self, env):
+    def finalize_generation(self, env, reached_goal, success_steps, success_energy, success_health):
         """
-        Log generation completion and save statistics.
+        Called at the end of a generation with GPU tensors of success data.
+        Writes agent stats and generation summary.
         
         Args:
             env: The environment
-            
-        Returns:
-            bool: True if there were survivors (can continue to next generation), False if extinct
+            reached_goal: (num_envs,) bool tensor on GPU
+            success_steps: (num_envs,) long tensor on GPU (steps when success, -1 if never)
+            success_energy: (num_envs,) float tensor on GPU
+            success_health: (num_envs,) float tensor on GPU
         """
         gen_duration = time.time() - self.gen_start_time
         
-        # Write accumulated step log once
-        if self.step_log_data:
-            step_log_path = os.path.join(self.gen_dir, "step_log.csv")
-            with open(step_log_path, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(["step", "active_agents", "goals_reached_cumulative", "new_goals_this_step"])
-                writer.writerows(self.step_log_data)
+        # Get indices of successful agents
+        survivor_indices_gpu = torch.where(reached_goal)[0]
+        survivor_indices = survivor_indices_gpu.cpu().numpy()
         
-        # Close agent stats file
+        # Write agent stats for successful agents (overwrite the initial False rows)
+        for idx in survivor_indices:
+            steps = success_steps[idx].item()
+            energy = success_energy[idx].item()
+            health = success_health[idx].item()
+            init_dist = self.gen_initial_distances[idx]
+            # We need to update the row – easiest: write a new row with goal_reached=True
+            # The CSV already has a row with False; we add a second row with True.
+            self.agent_writer.writerow([
+                idx, True, steps, energy, health, init_dist
+            ])
+        self.agent_stats_file.flush()
         self.agent_stats_file.close()
         
         # Calculate generation statistics
-        survivor_indices = list(self.gen_goals_reached)
         success_rate = (len(survivor_indices) / env.num_envs) * 100
         
-        path_lengths = [self.gen_agent_success_data[idx]["steps_to_success"] for idx in survivor_indices]
-        energies = [self.gen_agent_success_data[idx]["final_energy"] for idx in survivor_indices]
-        healths = [self.gen_agent_success_data[idx]["final_health"] for idx in survivor_indices]
+        path_lengths = [success_steps[idx].item() for idx in survivor_indices if success_steps[idx].item() > 0]
+        energies = [success_energy[idx].item() for idx in survivor_indices]
+        healths = [success_health[idx].item() for idx in survivor_indices]
         initial_dists = [self.gen_initial_distances[idx] for idx in survivor_indices]
         
         # Save generation log.json
@@ -255,7 +214,11 @@ class StrategyLoggingMixin:
         for idx in survivor_indices:
             if idx not in self.trial_goals_reached:
                 self.trial_goals_reached.add(idx)
-                self.trial_agent_success_data[idx] = self.gen_agent_success_data[idx]
+                self.trial_agent_success_data[idx] = {
+                    "steps_to_success": success_steps[idx].item(),
+                    "final_energy": success_energy[idx].item(),
+                    "final_health": success_health[idx].item()
+                }
         
         return len(survivor_indices) > 0
     
