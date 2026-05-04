@@ -209,6 +209,12 @@ def parse_args():
                     help="Enable simple average recombination (crossover) in genetic algorithm")
     parser.add_argument("--lif_steps", type=int, default=5,
                     help="Number of internal timesteps for spiking LIF neurons (default 5)")
+    parser.add_argument(
+        "--robot_radius",
+        type=int,
+        default=3,
+        help="Robot radius in pixels (default: 3)"
+    )
 
     return parser.parse_args()
 
@@ -260,7 +266,7 @@ def main():
     env_params = {
         "map_image_path": get_map_path(args.env),
         "num_envs": args.population,
-        "robot_radius": 3,
+        "robot_radius": args.robot_radius,
         "render": args.render,
         "max_steps": args.max_steps,
         "strategy_name": args.strategy,
