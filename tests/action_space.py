@@ -8,8 +8,8 @@ import os
 import sys
 
 BASE = {
-    "trials": 7,
-    "generations": 200,
+    "trials": 1,
+    "generations": 2,
     "population": 1000,
     "max_steps": 1000,
 }

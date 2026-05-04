@@ -31,7 +31,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 - Network architecture - ? 
 - Hidden layer size - ? 
 - LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on David PC; 10 Done on [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
-- - [This graph](https://claude.ai/chat/66fa0421-4d22-4a50-b5ec-d20a80f338e4) shows that `lif_steps = 5` is the optimal one (since the end result is nearly indiscernible with 10). 
+- - [This graph](https://claude.ai/share/c71960f9-4361-4ad2-a1fd-64245c60a109) shows that `lif_steps = 5` is the optimal one (since the end result is nearly indiscernible with 10). 
 
 --- 
 ## Difficulty 
