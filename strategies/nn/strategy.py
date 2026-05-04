@@ -9,6 +9,7 @@ from tqdm import tqdm
 from strategies.base_strategy import BaseStrategy
 from strategies.log import StrategyLoggingMixin
 from .helper import create_vector_neural_network, _average_recombination
+import multiprocessing as mp
 
 
 # ---------------------------------------------------------------------------
