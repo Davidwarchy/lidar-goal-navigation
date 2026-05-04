@@ -9,14 +9,14 @@ import os
 import sys
 
 BASE = {
-    "trials": 1,
-    "generations": 2,
-    "population": 100,
-    "max_steps": 100,
+    "trials": 7,
+    "generations": 200,
+    "population": 1000,
+    "max_steps": 1000,
 }
 
 # Robot radii to test (pixels)
-ROBOT_SIZES = [1, 3]
+ROBOT_SIZES = [1, 3, 5, 7, 9]
 
 STRATEGIES = [
     "random",
