@@ -395,7 +395,8 @@ class VectorRobotExplorationEnv:
                 # 2. Map world angles to LUT indices
                 # Shape: (num_envs, num_rays)
                 angles = (self.robot_orientation[:, None] + self.lidar_angles) % 360
-                angle_idxs = angles.long()
+                # FIX: Clip to [0, 359] to avoid index 360 due to floating point precision
+                angle_idxs = torch.clamp(angles.long(), 0, 359)
                 
                 # Direct GPU indexing into LUT
                 self._lidar_distances[:] = self.lidar_lut[iys[:, None], ixs[:, None], angle_idxs]
