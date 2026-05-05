@@ -71,6 +71,10 @@ def load_strategy(name,
             mutation_rate=mutation_rate,
             mutation_mag=mutation_mag,
             network_type="spiking",
+            curriculum_enabled=ga_curriculum_enabled,
+            curriculum_success_threshold=ga_curriculum_success_threshold,
+            curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
+            curriculum_distance_increment=ga_curriculum_distance_increment,
             action_space=action_space,  
             action_distribution=action_distribution, 
             strategy_name="nn_spiking",
@@ -136,7 +140,7 @@ def parse_args():
     parser.add_argument(
         "--ga_curriculum",
         action="store_true",
-        help="Enable generation-based curriculum for feedforward GA (`random_nn`) only"
+        help="Enable generation-based curriculum for GA-based strategies (spiking and random_nn)"
     )
     parser.add_argument(
         "--ga_curriculum_success_threshold",

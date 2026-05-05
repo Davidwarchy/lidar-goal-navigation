@@ -524,7 +524,7 @@ def _run_single_trial(trial_idx, strategy_params, env_params, base_output_dir):
         success_rate = (len(survivor_indices) / strategy_params['population_size']) * 100
         
         curriculum_promoted = False
-        curriculum_active = (strategy_params['network_type'] == "feedforward" and strategy_params['curriculum_enabled'])
+        curriculum_active = strategy_params['curriculum_enabled']
         if curriculum_active:
             if success_rate >= (strategy_params['curriculum_success_threshold'] * 100.0):
                 curriculum_streak += 1
