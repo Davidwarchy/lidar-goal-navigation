@@ -40,8 +40,8 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 --- 
 ## Other factors 
 
-- Robot size - 1, 3, 5 (**Peter**)
-- Cirriculum learning - on, off (**Peter**)
+- Robot size - 1, 3, 5 (**David - Done on OMEN**)
+- Cirriculum learning - on, off (**David**)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 

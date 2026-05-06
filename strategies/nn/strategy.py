@@ -146,7 +146,7 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
         
         # Curriculum logic
         curriculum_promoted = False
-        curriculum_active = (strategy_params['network_type'] == "feedforward" and strategy_params['curriculum_enabled'])
+        curriculum_active = (strategy_params['network_type'] in ["feedforward",  "spiking"] and strategy_params['curriculum_enabled'])
         success_rate = (torch.sum(reached_goal).item() / strategy_params['population_size']) * 100
         if curriculum_active:
             if success_rate >= (strategy_params['curriculum_success_threshold'] * 100.0):

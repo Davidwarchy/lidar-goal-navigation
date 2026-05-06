@@ -75,6 +75,10 @@ def load_strategy(name,
             recombination_enabled=recombination,
             n_steps=lif_steps,
             network_type="spiking",
+            curriculum_enabled=ga_curriculum_enabled,
+            curriculum_success_threshold=ga_curriculum_success_threshold,
+            curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
+            curriculum_distance_increment=ga_curriculum_distance_increment,
             action_space=action_space,  
             action_distribution=action_distribution, 
             strategy_name="nn_spiking",
@@ -321,3 +325,6 @@ if __name__ == "__main__":
 # python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png
 # 
 # python main.py --strategy spiking --trials 1 --generations 2 --population 100 
+# 
+# --- CURRICULUM LOGIC ---
+# python main.py --strategy random_nn --trials 1 --generations 2 --population 100 --max_steps 1000 --env 6.png --ga_curriculum
