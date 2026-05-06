@@ -8,10 +8,10 @@ import os
 import sys
 
 BASE = {
-    "trials": 2,
-    "generations": 2,
+    "trials": 7,
+    "generations": 200,
     "population": 1000,
-    "max_steps": 100,
+    "max_steps": 1000,
 }
 
 STRATEGIES = ["random_nn", "spiking"]
@@ -37,7 +37,7 @@ MOTOR_NOISE_TESTS = [
 
 def run(strategy, test_name, noise_type, extra_args):
     out_dir = os.path.join(
-        "output", "experiments", "motor_noise", test_name, strategy
+        "output", "experiments", "noise_actuator", test_name, strategy
     )
     os.makedirs(out_dir, exist_ok=True)
 
@@ -81,4 +81,4 @@ if __name__ == "__main__":
             print("-" * 40)
 
     print("\n=== DONE ===")
-    print("Results stored in output/experiments/motor_noise/")
+    print("Results stored in output/experiments/noise_actuator/")

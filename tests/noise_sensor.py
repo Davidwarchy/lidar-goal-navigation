@@ -8,8 +8,8 @@ import os
 import sys
 
 BASE = {
-    "trials": 2,
-    "generations": 2,
+    "trials": 7,
+    "generations": 200,
     "population": 1000,
     "max_steps": 1000,
 }
@@ -34,7 +34,7 @@ LIDAR_NOISE_TESTS = [
 
 def run(strategy, test_name, noise_type, extra_args):
     out_dir = os.path.join(
-        "output", "experiments", "lidar_noise", test_name, strategy
+        "output", "experiments", "noise_sensor", test_name, strategy
     )
     os.makedirs(out_dir, exist_ok=True)
 

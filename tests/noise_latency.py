@@ -8,8 +8,8 @@ import os
 import sys
 
 BASE = {
-    "trials": 2,
-    "generations": 2,
+    "trials": 7,
+    "generations": 200,
     "population": 1000,
     "max_steps": 1000,
 }
@@ -29,7 +29,7 @@ LATENCY_TESTS = [
 
 def run(strategy, test_name, delay):
     out_dir = os.path.join(
-        "output", "experiments", "latency", test_name, strategy
+        "output", "experiments", "noise_latency", test_name, strategy
     )
     os.makedirs(out_dir, exist_ok=True)
 
@@ -73,4 +73,4 @@ if __name__ == "__main__":
             print("-" * 40)
 
     print("\n=== DONE ===")
-    print("Results stored in output/experiments/latency/")
+    print("Results stored in output/experiments/noise_latency/")
