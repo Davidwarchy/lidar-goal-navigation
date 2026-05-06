@@ -35,21 +35,31 @@ except ModuleNotFoundError as e:
 
 class VectorRobotExplorationEnv:
     def __init__(self,
-                 map_image_path,
-                 num_envs=1,
-                 grid_width=None, grid_height=None,
-                 scale=2, fps=500,
-                 robot_radius=5, num_rays=100, ray_length=200,
-                 max_steps=1000,
-                 wheel_base=4.0, wheel_radius=0.75, dt=0.02,
-                 linear_speed=15.0, angular_speed=1.0,
-                 output_dir=None, render=False,
-                 strategy_name="unknown", strategy_parameters=None,
-                 use_lut=True,
-                 continue_after_goal=False,
-                 goal_spawn_dist=30.0,
-                 verbose=False,
-                 device='cuda'):
+                map_image_path,
+                num_envs=1,
+                grid_width=None, grid_height=None,
+                scale=2, fps=500,
+                robot_radius=5, num_rays=100, ray_length=200,
+                max_steps=1000,
+                wheel_base=4.0, wheel_radius=0.75, dt=0.02,
+                linear_speed=15.0, angular_speed=1.0,
+                output_dir=None, render=False,
+                strategy_name="unknown", strategy_parameters=None,
+                use_lut=True,
+                continue_after_goal=False,
+                goal_spawn_dist=30.0,
+                verbose=False,
+                device='cuda',
+                # Noise parameters
+                lidar_noise_type="none",
+                lidar_noise_std=5.0,
+                lidar_noise_max=10.0,
+                lidar_dropout_p=0.05,
+                motor_noise_type="none",
+                motor_slip_prob=0.1,
+                motor_slip_mag=0.5,
+                motor_deadzone_threshold=0.1,
+                observation_delay=0):
 
         self.num_envs = num_envs
         self.map_image_path = map_image_path
@@ -150,6 +160,20 @@ class VectorRobotExplorationEnv:
         # LIDAR distance buffer (kept on GPU, copied to CPU only when needed)
         self._lidar_distances = torch.zeros((num_envs, num_rays), device=self.device)
 
+        # ---------- Noise parameters ----------
+        self.lidar_noise_type = lidar_noise_type
+        self.lidar_noise_std = lidar_noise_std
+        self.lidar_noise_max = lidar_noise_max
+        self.lidar_dropout_p = lidar_dropout_p
+        self.motor_noise_type = motor_noise_type
+        self.motor_slip_prob = motor_slip_prob
+        self.motor_slip_mag = motor_slip_mag
+        self.motor_deadzone_threshold = motor_deadzone_threshold
+        self.observation_delay = observation_delay
+        
+        # Latency buffer (will be initialized in reset)
+        self.obs_buffer = None
+        self.obs_buffer_idx = 0
     def _load_lut(self):
         base_name = os.path.splitext(os.path.basename(self.map_image_path))[0]
         lut_path = os.path.join("environments", "luts", f"{base_name}_360.npy")
@@ -200,6 +224,15 @@ class VectorRobotExplorationEnv:
         self.energy.fill_(self.max_steps)
         self.health.fill_(500)
         self.done.fill_(False)
+        
+        # Initialize latency buffer if needed
+        if self.observation_delay > 0:
+            self.obs_buffer = torch.zeros(self.observation_delay + 1, self.num_envs, self.num_rays, device=self.device)
+            self.obs_buffer_idx = 0
+            # Fill buffer with initial observation
+            initial_obs = self._get_observation_no_noise()
+            for i in range(self.observation_delay + 1):
+                self.obs_buffer[i] = initial_obs
 
         return self._get_observation()
 
@@ -345,6 +378,22 @@ class VectorRobotExplorationEnv:
 
     def _update_robot_positions(self, v_left, v_right):
         with torch.no_grad():
+            # --- Motor Noise: Wheel Slip ---
+            if self.motor_noise_type == "slip":
+                slip_mask = torch.rand_like(v_left) < self.motor_slip_prob
+                # Slip reduces wheel velocity by random amount
+                slip_effect = 1.0 - torch.rand_like(v_left) * self.motor_slip_mag
+                v_left = torch.where(slip_mask, v_left * slip_effect, v_left)
+                v_right = torch.where(slip_mask, v_right * slip_effect, v_right)
+            
+            # --- Motor Noise: Dead Zone ---
+            elif self.motor_noise_type == "deadzone":
+                # Small commands have no effect
+                left_small = torch.abs(v_left) < self.motor_deadzone_threshold
+                right_small = torch.abs(v_right) < self.motor_deadzone_threshold
+                v_left = torch.where(left_small, torch.zeros_like(v_left), v_left)
+                v_right = torch.where(right_small, torch.zeros_like(v_right), v_right)
+            
             # Compute linear and angular velocities (use buffers)
             self._linear_vel = (v_left + v_right) / 2 * self.wheel_radius
             self._angular_vel = torch.rad2deg((v_right - v_left) / self.wheel_base * self.wheel_radius)
@@ -382,6 +431,20 @@ class VectorRobotExplorationEnv:
         Prioritises the O(1) LUT but falls back to vectorized ray marching.
         Returns GPU tensor of shape (num_envs, num_rays).
         """
+        distances = self._get_observation_no_noise()
+        
+        # Apply perceptual noise
+        if self.lidar_noise_type != "none":
+            distances = self._apply_lidar_noise(distances)
+        
+        # Apply latency delay
+        if self.observation_delay > 0:
+            distances = self._apply_latency(distances)
+        
+        return distances
+
+    def _get_observation_no_noise(self):
+        """Get raw LIDAR distances without noise or latency."""
         if self.use_lut and self.lidar_lut is not None:
             with torch.no_grad():
                 # 1. Prepare indices (H, W)
@@ -520,3 +583,35 @@ class VectorRobotExplorationEnv:
         """Explicitly clear GPU memory cache. Can be called between generations."""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+    def _apply_lidar_noise(self, distances):
+        """Add noise to LiDAR readings."""
+        if self.lidar_noise_type == "gaussian":
+            noise = torch.randn_like(distances) * self.lidar_noise_std
+            distances = distances + noise
+            distances = torch.clamp(distances, 0, self.ray_length)
+            
+        elif self.lidar_noise_type == "uniform":
+            noise = (torch.rand_like(distances) * 2 - 1) * self.lidar_noise_max
+            distances = distances + noise
+            distances = torch.clamp(distances, 0, self.ray_length)
+            
+        elif self.lidar_noise_type == "dropout":
+            mask = torch.rand_like(distances) > self.lidar_dropout_p
+            distances = torch.where(mask, distances, torch.full_like(distances, self.ray_length))
+        
+        return distances
+
+    def _apply_latency(self, distances):
+        """Apply observation delay using circular buffer."""
+        # Store current observation in buffer
+        self.obs_buffer[self.obs_buffer_idx] = distances
+        
+        # Retrieve delayed observation
+        delayed_idx = (self.obs_buffer_idx - self.observation_delay) % (self.observation_delay + 1)
+        delayed_obs = self.obs_buffer[delayed_idx]
+        
+        # Advance buffer index
+        self.obs_buffer_idx = (self.obs_buffer_idx + 1) % (self.observation_delay + 1)
+        
+        return delayed_obs

@@ -124,124 +124,59 @@ def parse_args():
     parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--env", type=str, default="6.png")
-    parser.add_argument(
-        "--no_lut", 
-        dest="use_lut", 
-        action="store_false", 
-        default=True,
-        help="Disable the pre-calculated Look-Up Table and use ray marching instead (default: LUT is enabled)"
-    )
-    parser.add_argument(    
-        "--continue_after_goal",
-        action="store_true",
-        help="Continue simulation even after reaching the reward until max_steps"
-    )
-
-    # New Evolutionary/Trial Arguments
-    parser.add_argument("--trials", type=int, default=1, help="Number of independent trials") 
-    parser.add_argument("--generations", type=int, default=1, help="Generations per trial") 
-
-    # Custom Lévy walk parameters
+    parser.add_argument("--no_lut", dest="use_lut", action="store_false", default=True)
+    parser.add_argument("--continue_after_goal", action="store_true")
+    
+    parser.add_argument("--trials", type=int, default=1)
+    parser.add_argument("--generations", type=int, default=1)
+    
     parser.add_argument("--alpha", type=float, default=1.6)
     parser.add_argument("--min_step", type=float, default=1.0)
     parser.add_argument("--max_step_len", type=float, default=200.0)
-    parser.add_argument("--load_weights", type=str, default=None, help="Path to weights")
-    parser.add_argument("--weights_dir", type=str, default="ga_weights", help="Directory to save/load weights")
-    parser.add_argument("--mutation_rate", type=float, default=0.1, help="Mutation rate for genetic algorithm")
-    parser.add_argument(
-        "--ga_curriculum",
-        action="store_true",
-        help="Enable generation-based curriculum for feedforward GA (`random_nn`) only"
-    )
-    parser.add_argument(
-        "--ga_curriculum_success_threshold",
-        type=float,
-        default=0.05,
-        help="Minimum generation success rate to count toward curriculum streak (default 0.05)"
-    )
-    parser.add_argument(
-        "--ga_curriculum_consecutive_gens",
-        type=int,
-        default=3,
-        help="Consecutive qualifying generations needed before increasing goal distance"
-    )
-    parser.add_argument(
-        "--ga_curriculum_distance_increment",
-        type=float,
-        default=5.0,
-        help="Goal distance increase after curriculum promotion"
-    )
-
-    parser.add_argument("--verbose", action="store_true", help="Verbose output during trials")
-
-    parser.add_argument(
-        "--save_top_k", 
-        type=int, 
-        default=0, 
-        help="Number of top individuals to save per generation (0 = don't save weights)"
-    )
-
-    parser.add_argument(
-        "--action_space",
-        type=str,
-        default="discrete",
-        choices=["discrete", "continuous"],
-        help="Action space type: discrete (4 actions) or continuous (linear/angular velocity)"
-    )
-
-    parser.add_argument(
-        "--action_distribution",
-        type=str,
-        default="deterministic",
-        choices=["deterministic", "stochastic"],
-        help="Action distribution: deterministic (argmax) or stochastic (sample from softmax)"
-    )
-
-        
-    parser.add_argument("--output_dir", type=str, default=None,
-                        help="Base output directory (default: './output')")
+    parser.add_argument("--load_weights", type=str, default=None)
+    parser.add_argument("--weights_dir", type=str, default="ga_weights")
+    parser.add_argument("--mutation_rate", type=float, default=0.1)
+    parser.add_argument("--ga_curriculum", action="store_true")
+    parser.add_argument("--ga_curriculum_success_threshold", type=float, default=0.05)
+    parser.add_argument("--ga_curriculum_consecutive_gens", type=int, default=3)
+    parser.add_argument("--ga_curriculum_distance_increment", type=float, default=5.0)
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--save_top_k", type=int, default=0)
+    parser.add_argument("--action_space", type=str, default="discrete", choices=["discrete", "continuous"])
+    parser.add_argument("--action_distribution", type=str, default="deterministic", choices=["deterministic", "stochastic"])
+    parser.add_argument("--output_dir", type=str, default=None)
+    parser.add_argument("--parallel", action="store_true")
+    parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
+    parser.add_argument("--mutation_mag", type=float, default=0.5)
+    parser.add_argument("--goal_spawn_dist", type=float, default=30.0)
+    parser.add_argument("--recombination", action="store_true")
+    parser.add_argument("--lif_steps", type=int, default=5)
+    parser.add_argument("--robot_radius", type=int, default=3)
+    parser.add_argument("--fitness_proxy", type=str, default="none", choices=["none", "health", "energy"])
+    parser.add_argument("--fitness_pool", type=str, default="survivors_only", choices=["all_agents", "survivors_only"])
     
-    parser.add_argument("--parallel", action="store_true",
-                        help="Run trials in parallel using multiprocessing")
+    # --- Noise Arguments ---
+    parser.add_argument("--lidar_noise", type=str, default="none",
+                        choices=["none", "gaussian", "uniform", "dropout"],
+                        help="LiDAR noise type")
+    parser.add_argument("--lidar_noise_std", type=float, default=5.0,
+                        help="Gaussian noise standard deviation (pixels)")
+    parser.add_argument("--lidar_noise_max", type=float, default=10.0,
+                        help="Uniform noise max offset (pixels)")
+    parser.add_argument("--lidar_dropout_p", type=float, default=0.05,
+                        help="Ray dropout probability")
+    parser.add_argument("--motor_noise", type=str, default="none",
+                        choices=["none", "slip", "deadzone"],
+                        help="Motor noise type")
+    parser.add_argument("--motor_slip_prob", type=float, default=0.1,
+                        help="Wheel slip probability")
+    parser.add_argument("--motor_slip_mag", type=float, default=0.5,
+                        help="Wheel slip magnitude (0-1)")
+    parser.add_argument("--motor_deadzone", type=float, default=0.1,
+                        help="Motor deadzone threshold")
+    parser.add_argument("--obs_delay", type=int, default=0,
+                        help="Observation delay in steps (latency)")
     
-    parser.add_argument("--device", type=str, default="cuda",
-                        choices=["cuda", "cpu"],
-                        help="Device to run on (cuda or cpu)")
-    parser.add_argument("--mutation_mag", type=float, default=0.5,
-                    help="Mutation magnitude for genetic algorithm")
-    parser.add_argument(
-        "--goal_spawn_dist",
-        type=float,
-        default=30.0,
-        help="Initial distance from robot spawn to goal (default: 30.0)"
-    )
-    parser.add_argument("--recombination", action="store_true",
-                    help="Enable simple average recombination (crossover) in genetic algorithm")
-    parser.add_argument("--lif_steps", type=int, default=5,
-                    help="Number of internal timesteps for spiking LIF neurons (default 5)")
-    parser.add_argument(
-        "--robot_radius",
-        type=int,
-        default=3,
-        help="Robot radius in pixels (default: 3)"
-    )
-
-    parser.add_argument(
-        "--fitness_proxy",
-        type=str,
-        default="none",
-        choices=["none", "health", "energy"],
-        help="Fitness proxy for selection: none (default, only survival), health, or energy"
-    )
-
-    parser.add_argument(
-        "--fitness_pool",
-        type=str,
-        default="survivors_only",
-        choices=["all_agents", "survivors_only"],
-        help="Pool for fitness selection: all_agents (consider all) or survivors_only (only goal-reached)"
-    )
-
     return parser.parse_args()
 
 def main():
@@ -281,8 +216,18 @@ def main():
         "device": args.device,
         "mutation_rate": args.mutation_rate,
         "mutation_magnitude": args.mutation_mag,
-        "action_space": args.action_space,          
+        "action_space": args.action_space,
         "action_distribution": args.action_distribution,
+        # Noise metadata
+        "lidar_noise_type": args.lidar_noise,
+        "lidar_noise_std": args.lidar_noise_std,
+        "lidar_noise_max": args.lidar_noise_max,
+        "lidar_dropout_p": args.lidar_dropout_p,
+        "motor_noise_type": args.motor_noise,
+        "motor_slip_prob": args.motor_slip_prob,
+        "motor_slip_mag": args.motor_slip_mag,
+        "motor_deadzone_threshold": args.motor_deadzone,
+        "observation_delay": args.obs_delay,
         "command_line_args": vars(args)
     }
     with open(os.path.join(run_dir, "metadata.json"), 'w') as f:
@@ -299,11 +244,20 @@ def main():
         "use_lut": args.use_lut,
         "continue_after_goal": args.continue_after_goal,
         "verbose": args.verbose,
-        "device": args.device, 
-        "goal_spawn_dist": args.goal_spawn_dist
+        "device": args.device,
+        "goal_spawn_dist": args.goal_spawn_dist,
+        # Noise parameters
+        "lidar_noise_type": args.lidar_noise,
+        "lidar_noise_std": args.lidar_noise_std,
+        "lidar_noise_max": args.lidar_noise_max,
+        "lidar_dropout_p": args.lidar_dropout_p,
+        "motor_noise_type": args.motor_noise,
+        "motor_slip_prob": args.motor_slip_prob,
+        "motor_slip_mag": args.motor_slip_mag,
+        "motor_deadzone_threshold": args.motor_deadzone,
+        "observation_delay": args.obs_delay,
     }
     
-    # Load strategy
     strategy = load_strategy(
         args.strategy,
         population_size=args.population,
@@ -312,7 +266,7 @@ def main():
         mutation_rate=args.mutation_rate,
         mutation_mag=args.mutation_mag,
         recombination=args.recombination,
-        lif_steps=args.lif_steps,        
+        lif_steps=args.lif_steps,
         alpha=args.alpha,
         min_step=args.min_step,
         max_step=args.max_step_len,
@@ -324,8 +278,8 @@ def main():
         action_distribution=args.action_distribution,
         parallel_trials=args.parallel,
         device=args.device,
-        fitness_proxy=args.fitness_proxy,   
-        fitness_pool=args.fitness_pool       
+        fitness_proxy=args.fitness_proxy,
+        fitness_pool=args.fitness_pool
     )
     
     # Run
