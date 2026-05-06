@@ -18,7 +18,7 @@ We are going to test these configurations.
 - The folder is in David's local machine, and might not be accessible from here. 
 
 ## Time 
-Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**) 
+Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**) 
 
 --- 
 ## Natural Selection 
@@ -30,12 +30,12 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 ## Network architecture
 - Network architecture - ? 
 - Hidden layer size - ? 
-- LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on David PC; 10 Done on [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
+- LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on OMEN [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
 - - [This graph](https://claude.ai/share/c71960f9-4361-4ad2-a1fd-64245c60a109) shows that `lif_steps = 5` is the optimal one (since the end result is nearly indiscernible with 10). 
 
 --- 
 ## Difficulty 
-- Goal distance - 10, 20, 30, 40  (**Running on Kaggle - davidwarchy**)
+- Goal distance - 10, 20, 30, 40  (**Done on OMEN**)
 
 --- 
 ## Other factors 
@@ -50,7 +50,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Running on OMEN**)
 - Determinism/Stochasticity - on, off 
 
 ## Fitness Function 
-- Fitness function - none, health, energy (**Peter**)
+- Fitness function - none, health, energy (**David**)
 
 This is what we are going to compare against. 
 

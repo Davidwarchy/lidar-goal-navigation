@@ -25,3 +25,12 @@ We don't have any feedback for fitness in real evolution.
 
 https://claude.ai/share/a312720d-1d92-4da6-ab05-bbe69a0d6717 / https://claude.ai/chat/1e48324f-d4e1-4b3b-bffc-e364551ba240 has a good comparison 
 https://claude.ai/chat/9c4913cf-beb2-4b83-be3a-5da41d0487b1 it might be nice to have a good look at this 
+
+## Survival Proxies 
+We want to have the option for using a particular fitness proxy (health, energy) or not (as it is right now)
+Please rewrite the code to do this
+Show where we need to make changes and where not
+We want to apply this to ns strategies and have these options as well: 
+- reproduce normally (no fitness) 
+- reproduce only using top n members for proxy - (whether or not they survived). n can 10% of population 
+- reproduce only using top n members for proxy - (for survivors only)
