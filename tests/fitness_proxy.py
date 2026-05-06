@@ -21,8 +21,8 @@ import os
 import sys
 
 BASE = {
-    "trials": 2,
-    "generations": 2,
+    "trials": 7,
+    "generations": 200,
     "population": 1000,
     "max_steps": 1000,
 }

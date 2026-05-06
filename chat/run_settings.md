@@ -45,12 +45,17 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
-## Noise 
-- Noise - on, off 
+## Action Space 
+- Discrete 
+- Continuous 
+
+--- 
+## Uncertainty  
+- Noise - on, off (There's lidar noise, etc)
 - Determinism/Stochasticity - on, off 
 
 ## Fitness Function 
-- Fitness function - none, health, energy (**David**)
+- Fitness function - none, health, energy (**David - Running on OMEN**)
 
 This is what we are going to compare against. 
 

@@ -34,3 +34,16 @@ We want to apply this to ns strategies and have these options as well:
 - reproduce normally (no fitness) 
 - reproduce only using top n members for proxy - (whether or not they survived). n can 10% of population 
 - reproduce only using top n members for proxy - (for survivors only)
+
+## Action - Action Space, Action Distribution 
+In the continuous stochastic case, we might be tempted to constraint the outputs. 
+
+These constraints embed prior knowledge about the robot's physical limits: 
+- Motors can't spin infinitely fast
+- The simulation has max speeds defined
+
+But these constraints are important. What happens without constraints: 
+- The network could output linear_vel = 5000, which:
+- Would teleport the robot across the map in one step
+- Breaks collision detection (skips over walls)
+- Makes the simulation unstable/nonsensical

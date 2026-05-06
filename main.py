@@ -355,3 +355,6 @@ if __name__ == "__main__":
 # 
 # --- CUSTOM LEVY WALK ---
 # python main.py --strategy random_nn --trials 1 --generations 2 --population 1000 --max_steps 1000 --env 6.png --fitness_proxy none
+# 
+# --- ACTION SPACE / DISTRIBUTION --- 
+# python main.py --strategy nn_random --trials 1 --generations 2 --population 10 --max_steps 1000 --env 6.png --action_space continuous --action_distribution stochastic

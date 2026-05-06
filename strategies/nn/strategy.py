@@ -314,21 +314,36 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
                 if strategy_params['action_space'] == "discrete":
                     if strategy_params['action_distribution'] == "deterministic":
                         actions = torch.argmax(output, dim=1)
-                    else:
+                    else:  # stochastic
                         exp_output = torch.exp(output - torch.max(output, dim=1, keepdim=True)[0])
                         probs = exp_output / torch.sum(exp_output, dim=1, keepdim=True)
                         actions = torch.multinomial(probs, 1).squeeze(1)
-                else:  # continuous
+                else:  # continuous action space
                     linear_vel = output[:, 0]
                     angular_vel = output[:, 1]
-                    linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
-                    angular_vel = torch.clamp(angular_vel, -1, 1) * 90
-                    actions = torch.stack([linear_vel, angular_vel], dim=1)
-                    if strategy_params['action_distribution'] == "stochastic":
-                        noise_scale = 0.1
-                        actions += torch.randn_like(actions) * noise_scale
-                        actions[:, 0] = torch.clamp(actions[:, 0], -env.linear_speed, env.linear_speed)
-                        actions[:, 1] = torch.clamp(actions[:, 1], -90, 90)
+                    
+                    if strategy_params['action_distribution'] == "deterministic":
+                        # Direct mapping with clamping
+                        linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
+                        angular_vel = torch.clamp(angular_vel, -1, 1) * 90
+                        actions = torch.stack([linear_vel, angular_vel], dim=1)
+                    else:  # stochastic - sample from Gaussian around network output
+                        # Network outputs mean values, sample from N(mean, sigma)
+                        # Use smaller sigma for stability (0.1 * range)
+                        linear_sigma = 0.1 * env.linear_speed  # ~1.5
+                        angular_sigma = 9.0  # 10% of 90 deg range
+                        
+                        # Add noise and clamp
+                        linear_vel = torch.clamp(linear_vel, -1, 1) * env.linear_speed
+                        angular_vel = torch.clamp(angular_vel, -1, 1) * 90
+                        
+                        linear_vel = linear_vel + torch.randn_like(linear_vel) * linear_sigma
+                        angular_vel = angular_vel + torch.randn_like(angular_vel) * angular_sigma
+                        
+                        linear_vel = torch.clamp(linear_vel, -env.linear_speed, env.linear_speed)
+                        angular_vel = torch.clamp(angular_vel, -90, 90)
+                        
+                        actions = torch.stack([linear_vel, angular_vel], dim=1)
                 
                 # Step environment – actions are already GPU tensors
                 obs, rewards, dones, info = env.step(actions, action_space=strategy_params['action_space'])
