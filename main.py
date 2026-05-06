@@ -33,7 +33,9 @@ def load_strategy(name,
                   action_space="discrete",
                   action_distribution="deterministic",
                   parallel_trials=False,
-                  device='cuda'):
+                  device='cuda',
+                  fitness_proxy="none",
+                  fitness_pool="survivors_only"):
     """Load strategy class based on name."""
     # Normalize strategy names
     if name == "spiking":
@@ -83,7 +85,9 @@ def load_strategy(name,
             action_distribution=action_distribution, 
             strategy_name="nn_spiking",
             parallel_trials=parallel_trials,
-            device=device
+            device=device,
+            fitness_proxy=fitness_proxy,      
+            fitness_pool=fitness_pool         
         )
 
     if name == "nn_random":
@@ -104,7 +108,9 @@ def load_strategy(name,
             action_distribution=action_distribution, 
             strategy_name="nn_random",
             parallel_trials=parallel_trials,
-            device=device
+            device=device, 
+            fitness_proxy=fitness_proxy,     
+            fitness_pool=fitness_pool        
         )
 
     raise ValueError(f"Unknown strategy: {name}")
@@ -220,6 +226,22 @@ def parse_args():
         help="Robot radius in pixels (default: 3)"
     )
 
+    parser.add_argument(
+        "--fitness_proxy",
+        type=str,
+        default="none",
+        choices=["none", "health", "energy"],
+        help="Fitness proxy for selection: none (default, only survival), health, or energy"
+    )
+
+    parser.add_argument(
+        "--fitness_pool",
+        type=str,
+        default="survivors_only",
+        choices=["all_agents", "survivors_only"],
+        help="Pool for fitness selection: all_agents (consider all) or survivors_only (only goal-reached)"
+    )
+
     return parser.parse_args()
 
 def main():
@@ -301,7 +323,9 @@ def main():
         action_space=args.action_space,
         action_distribution=args.action_distribution,
         parallel_trials=args.parallel,
-        device=args.device
+        device=args.device,
+        fitness_proxy=args.fitness_proxy,   
+        fitness_pool=args.fitness_pool       
     )
     
     # Run
@@ -328,3 +352,6 @@ if __name__ == "__main__":
 # 
 # --- CURRICULUM LOGIC ---
 # python main.py --strategy random_nn --trials 1 --generations 2 --population 100 --max_steps 1000 --env 6.png --ga_curriculum
+# 
+# --- CUSTOM LEVY WALK ---
+# python main.py --strategy random_nn --trials 1 --generations 2 --population 1000 --max_steps 1000 --env 6.png --fitness_proxy none
