@@ -1,4 +1,3 @@
-import pygame
 import numpy as np
 import os
 from .base_strategy import BaseStrategy
@@ -9,6 +8,7 @@ class ManualControlStrategy(BaseStrategy):
         super().__init__("manual", {}, parallel_trials=False)
     
     def run(self, env_params, base_output_dir):
+        import pygame
         trial_dir = os.path.join(base_output_dir, "trial_1")
         env_params_with_out = env_params.copy()
         env_params_with_out["output_dir"] = trial_dir
