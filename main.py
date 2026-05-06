@@ -112,7 +112,7 @@ def load_strategy(name,
 def parse_args():
     parser = argparse.ArgumentParser(description="Vectorized Robot Exploration")
     parser.add_argument("--strategy", type=str, default="random", 
-                        choices=["random", "levy", "levy_custom", "uniform", "manual", "spiking", "random_nn"],
+                        choices=["random", "levy", "levy_custom", "uniform", "manual", "spiking", "random_nn", "nn_spiking", "nn_random"],
                         help="Exploration strategy")
     parser.add_argument("--max_steps", type=int, default=1000)
     parser.add_argument("--population", type=int, default=10, help="Number of parallel robots / population size")
