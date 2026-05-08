@@ -45,20 +45,26 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
-## Action Space 
-- Discrete 
-- Continuous 
+## Action 
+### Action Space 
+- Discrete - **Done on OMEN**
+- Continuous - **Done on OMEN**
+### Action Distribution 
+- Determinism/Stochasticity - on, off **Done on OMEN** 
+
+---
+## Noise 
+- Sensor noise - on, off (gaussian noise **done on Kaggle - 1davidwarutumo**... uniform noise **running on Kaggle - davidwarchy**)
+- Actuator noise - on, off
+- Latency - 1, 2, 5, 10 
 
 --- 
-## Uncertainty  
-- Noise - on, off (There's lidar noise, etc)
-- Determinism/Stochasticity - on, off 
-
 ## Fitness Function 
 - Fitness function - none, health, energy (**David - Running on OMEN**)
 
 This is what we are going to compare against. 
 
+--- 
 ## Further Considerations 
 https://gemini.google.com/share/16047d46abf0 - other maps, multiple maps; sensory impairments, sensor noise, 
 
