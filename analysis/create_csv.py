@@ -62,7 +62,7 @@ def consolidate_experiment_data(base_experiments_folder):
         # Combine and save if data was found
         if all_data:
             combined_df = pd.concat(all_data, ignore_index=True)
-            output_file = os.path.join(param_path, f"{param}.csv")
+            output_file = os.path.join(base_experiments_folder, f"{param}.csv")
             combined_df.to_csv(output_file, index=False)
             print(f"Saved consolidated data to: {output_file}")
 
