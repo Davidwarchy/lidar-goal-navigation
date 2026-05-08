@@ -3,11 +3,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 
-files = [
-    'action.csv', 'fitness_proxy.csv', 'goal_distance.csv', 'lif_steps.csv',
-    'max_steps.csv', 'mutation_magnitude.csv', 'mutation_rate.csv',
-    'population.csv', 'recombination.csv', 'robot_size.csv'
-]
+# Base directory where CSV files are located
+EXPERIMENTS_DIR = "output/experiments"
 
 # Function to clean success_rate_percent
 def clean_success_rate(val):
@@ -15,38 +12,52 @@ def clean_success_rate(val):
         return float(val.replace('%', ''))
     return val
 
+# Find all CSV files in the experiments directory
+csv_files = [f for f in os.listdir(EXPERIMENTS_DIR) if f.endswith('.csv')]
+
+if not csv_files:
+    print(f"No CSV files found in {EXPERIMENTS_DIR}")
+    exit()
+
+print(f"Found CSV files: {csv_files}")
+
+# Load each CSV file
 dataframes = {}
-for f in files:
-    df = pd.read_csv(f)
+for csv_file in csv_files:
+    file_path = os.path.join(EXPERIMENTS_DIR, csv_file)
+    df = pd.read_csv(file_path)
     df['success_rate_percent'] = df['success_rate_percent'].apply(clean_success_rate)
-    dataframes[f] = df
-
-# Checking the first few rows of one to ensure cleaning worked
-print(dataframes['action.csv'].head())
-print(dataframes['action.csv'].info())
-
-# Create two sets of plots (5 each) to ensure they are readable
-fig1, axes1 = plt.subplots(5, 1, figsize=(10, 25))
-fig2, axes2 = plt.subplots(5, 1, figsize=(10, 25))
-
-all_axes = list(axes1) + list(axes2)
-
-for i, f in enumerate(files):
-    df = dataframes[f]
-    ax = all_axes[i]
+    dataframes[csv_file] = df
     
-    # We'll plot success_rate_percent over generations
-    # Use lineplot which automatically aggregates trials with error bands
-    sns.lineplot(data=df, x='generation', y='success_rate_percent', hue='parameter_value', ax=ax)
+    # Print info for first file to verify
+    if csv_file == csv_files[0]:
+        print(f"\nFirst few rows of {csv_file}:")
+        print(df.head())
+        print(df.info())
+
+# Create plots - one figure per CSV file
+for csv_file, df in dataframes.items():
+    plt.figure(figsize=(10, 6))
+    
+    # Extract parameter name from filename (remove .csv)
+    param_name = csv_file.replace('.csv', '')
+    
+    # Plot success_rate_percent over generations
+    sns.lineplot(data=df, x='generation', y='success_rate_percent', hue='parameter_value')
     
     # Set titles and labels
-    param_name = df['parameter'].iloc[0]
-    ax.set_title(f'Performance Comparison: {param_name}', fontsize=14)
-    ax.set_ylabel('Success Rate (%)')
-    ax.set_xlabel('Generation')
-    ax.grid(True, linestyle='--', alpha=0.6)
-    ax.legend(title=param_name, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title(f'Performance Comparison: {param_name}', fontsize=14)
+    plt.ylabel('Success Rate (%)')
+    plt.xlabel('Generation')
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.legend(title=param_name, bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.tight_layout()
+    
+    # Save figure in the experiments directory
+    output_path = os.path.join(EXPERIMENTS_DIR, f'{param_name}_plot.png')
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Saved: {output_path}")
 
-plt.tight_layout()
-fig1.savefig('performance_comparison_1.png')
-fig2.savefig('performance_comparison_2.png')
+print(f"\nDone! Plots saved to {EXPERIMENTS_DIR}")
