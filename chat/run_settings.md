@@ -29,6 +29,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 --- 
 ## Network architecture
 - Network architecture - ? 
+- Number of hidden layers - ? 
 - Hidden layer size - ? 
 - LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on OMEN [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
 - - [This graph](https://claude.ai/share/c71960f9-4361-4ad2-a1fd-64245c60a109) shows that `lif_steps = 5` is the optimal one (since the end result is nearly indiscernible with 10). 
@@ -54,7 +55,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 
 ---
 ## Noise 
-- Sensor noise - on, off (gaussian noise **done on Kaggle - 1davidwarutumo**... uniform noise **running on Kaggle - davidwarchy**)
+- Sensor noise - on, off (gaussian noise **Done on Kaggle - 1davidwarutumo**... uniform noise **Done on Kaggle - davidwarchy**... dropout noise **Done on Kaggle - davidwarchy**)
 - Actuator noise - on, off
 - Latency - 1, 2, 5, 10 
 
