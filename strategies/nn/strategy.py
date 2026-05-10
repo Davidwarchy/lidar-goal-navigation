@@ -383,8 +383,9 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
                 success_rate, curriculum_streak, strategy_params
             )
             if curriculum_promoted:
-                env.goal_spawn_dist += distance_increment
-                gen_pbar.write(f"[CURRICULUM] Trial {trial_idx} Gen {gen}: goal_spawn_dist -> {env.goal_spawn_dist:.2f}")
+                new_dist = min(env.goal_spawn_dist + distance_increment, 40.0)
+                env.goal_spawn_dist = new_dist
+                gen_pbar.write(f"[CURRICULUM] Trial {trial_idx} Gen {gen}: goal_spawn_dist -> {env.goal_spawn_dist:.2f} (capped at 40)")
         
         # --- Save top-k individuals ---
         if strategy_params['save_top_k'] > 0:
