@@ -131,8 +131,7 @@ def run_experiment(strategy, dimension, param_value, curriculum_params, base_arg
 # Main: iterate over dimensions and values
 # ----------------------------------------------------------------------
 def main():
-    timestamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
-    output_root = os.path.join("output", "experiments", "curriculum", timestamp)
+    output_root = os.path.join("output", "experiments", "curriculum")
     os.makedirs(output_root, exist_ok=True)
 
     base_args = {

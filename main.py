@@ -76,7 +76,7 @@ def load_strategy(name,
         from strategies.nn import NNStrategy
         hidden_sizes_str = hidden_sizes
         hidden_sizes_list = [int(x.strip()) for x in hidden_sizes_str.split(",")] if hidden_sizes_str else [64]
-        network_params = {"hidden_sizes": hidden_sizes_list, "n_steps": lif_steps}
+        network_params = {"hidden_sizes": hidden_sizes_list}
         return NNStrategy(
             population_size=population_size,
             generations=num_generations,
@@ -103,7 +103,6 @@ def load_strategy(name,
     if name == "nn_random":
         from strategies.nn import NNStrategy
         hidden_sizes_str = hidden_sizes
-        print(f"Parsed hidden_sizes string: '{hidden_sizes_str}'")
         hidden_sizes_list = [int(x.strip()) for x in hidden_sizes_str.split(",")] if hidden_sizes_str else [64]
         network_params = {"hidden_sizes": hidden_sizes_list}
         return NNStrategy(
