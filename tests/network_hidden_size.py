@@ -19,7 +19,7 @@ BASE = {
 }
 
 # Hidden layer sizes to test (single hidden layer)
-HIDDEN_SIZES = [16, 32, 64, 128, 256]
+HIDDEN_SIZES = [2, 4, 8, 16, 32, 64, 128, 256]
 
 STRATEGIES = ["random_nn", "spiking"]
 MAP = "6.png"
