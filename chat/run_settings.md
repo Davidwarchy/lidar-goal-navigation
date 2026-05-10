@@ -5,8 +5,8 @@ We want to have the following standard for the configuration tests
 - _population_ 1000 
 - _max\_steps_ 1000 
 
-- standard (random_nn, spiking_nn) - **done on David PC** 
-- standard (random, levy, uniform) - **done on OMEN**
+- standard (random_nn, spiking_nn) - **Done on David PC** 
+- standard (random, levy, uniform) - **Done on OMEN**
 
 # Test Configurations
 
@@ -29,8 +29,8 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 --- 
 ## Network architecture
 - Network architecture - ? 
-- Number of hidden layers - ? 
-- Hidden layer size - ? 
+- Number of hidden layers - **Done on Kaggle** 
+- Hidden layer size - **Running on Kaggle** 
 - LIF timesteps - 1, 2, 5, 10 (**1,2,5 Done on OMEN [Kaggle - 1davidwarutumo](https://www.kaggle.com/code/warutumod/lidargoalnavigation-lifsteps10?scriptVersionId=315239134)**) 
 - - [This graph](https://claude.ai/share/c71960f9-4361-4ad2-a1fd-64245c60a109) shows that `lif_steps = 5` is the optimal one (since the end result is nearly indiscernible with 10). 
 
@@ -61,7 +61,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 
 --- 
 ## Fitness Function 
-- Fitness function - none, health, energy (**David - Running on OMEN**)
+- Fitness function - none, health, energy (**David - Done on OMEN**)
 
 This is what we are going to compare against. 
 
