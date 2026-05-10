@@ -26,6 +26,7 @@ def load_strategy(name,
                   lif_steps=5, 
                   load_weights=False,
                   weights_dir="weights",
+                  hidden_sizes=[64],
                   ga_curriculum_enabled=False,
                   ga_curriculum_success_threshold=0.05,
                   ga_curriculum_consecutive_gens=3,
@@ -66,8 +67,16 @@ def load_strategy(name,
         return UniformRunLengthStrategy(min_step=1, max_step=10,
                                         num_trials=num_trials, max_generations=num_generations, parallel_trials=parallel_trials)
 
+    # Parse hidden_sizes from command line argument
+    hidden_sizes_str = hidden_sizes
+    hidden_sizes_list = [int(x.strip()) for x in hidden_sizes_str.split(",")] if hidden_sizes_str else [64]
+    network_params = {"hidden_sizes": hidden_sizes_list}
+
     if name == "nn_spiking":
         from strategies.nn import NNStrategy
+        hidden_sizes_str = hidden_sizes
+        hidden_sizes_list = [int(x.strip()) for x in hidden_sizes_str.split(",")] if hidden_sizes_str else [64]
+        network_params = {"hidden_sizes": hidden_sizes_list, "n_steps": lif_steps}
         return NNStrategy(
             population_size=population_size,
             generations=num_generations,
@@ -81,17 +90,22 @@ def load_strategy(name,
             curriculum_success_threshold=ga_curriculum_success_threshold,
             curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
             curriculum_distance_increment=ga_curriculum_distance_increment,
-            action_space=action_space,  
-            action_distribution=action_distribution, 
+            action_space=action_space,
+            action_distribution=action_distribution,
             strategy_name="nn_spiking",
             parallel_trials=parallel_trials,
             device=device,
-            fitness_proxy=fitness_proxy,      
-            fitness_pool=fitness_pool         
+            fitness_proxy=fitness_proxy,
+            fitness_pool=fitness_pool,
+            **network_params
         )
 
     if name == "nn_random":
         from strategies.nn import NNStrategy
+        hidden_sizes_str = hidden_sizes
+        print(f"Parsed hidden_sizes string: '{hidden_sizes_str}'")
+        hidden_sizes_list = [int(x.strip()) for x in hidden_sizes_str.split(",")] if hidden_sizes_str else [64]
+        network_params = {"hidden_sizes": hidden_sizes_list}
         return NNStrategy(
             population_size=population_size,
             generations=num_generations,
@@ -104,15 +118,15 @@ def load_strategy(name,
             curriculum_success_threshold=ga_curriculum_success_threshold,
             curriculum_consecutive_gens=ga_curriculum_consecutive_gens,
             curriculum_distance_increment=ga_curriculum_distance_increment,
-            action_space=action_space, 
-            action_distribution=action_distribution, 
+            action_space=action_space,
+            action_distribution=action_distribution,
             strategy_name="nn_random",
             parallel_trials=parallel_trials,
-            device=device, 
-            fitness_proxy=fitness_proxy,     
-            fitness_pool=fitness_pool        
+            device=device,
+            fitness_proxy=fitness_proxy,
+            fitness_pool=fitness_pool,
+            **network_params
         )
-
     raise ValueError(f"Unknown strategy: {name}")
 
 def parse_args():
@@ -177,6 +191,11 @@ def parse_args():
     parser.add_argument("--obs_delay", type=int, default=0,
                         help="Observation delay in steps (latency)")
     
+    # Additional argument for neural network hidden layer sizes
+    parser.add_argument("--hidden_sizes", type=str, default="64",
+                    help="Comma-separated hidden layer sizes (e.g., '64' or '64,32'). "
+                         "For spiking networks, each value is a LIF layer.")
+    
     return parser.parse_args()
 
 def main():
@@ -228,6 +247,7 @@ def main():
         "motor_slip_mag": args.motor_slip_mag,
         "motor_deadzone_threshold": args.motor_deadzone,
         "observation_delay": args.obs_delay,
+        "hidden_sizes": args.hidden_sizes, 
         "command_line_args": vars(args)
     }
     with open(os.path.join(run_dir, "metadata.json"), 'w') as f:
@@ -267,6 +287,7 @@ def main():
         mutation_mag=args.mutation_mag,
         recombination=args.recombination,
         lif_steps=args.lif_steps,
+        hidden_sizes=args.hidden_sizes,
         alpha=args.alpha,
         min_step=args.min_step,
         max_step=args.max_step_len,

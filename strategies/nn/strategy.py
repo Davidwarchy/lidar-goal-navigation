@@ -493,6 +493,7 @@ class NNStrategy(BaseStrategy, StrategyLoggingMixin):
         self.mutation_mag = mutation_mag
         self.recombination_enabled = recombination_enabled
         self.n_steps = n_steps
+        self.hidden_sizes = network_params.get("hidden_sizes", [64])
         self.max_samples_per_gen = max_samples_per_gen
         self.network_type = network_type
         self.network_params = network_params

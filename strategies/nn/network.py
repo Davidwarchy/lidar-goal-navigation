@@ -223,29 +223,47 @@ class VectorLIFLayer(nn.Module):
 
 class VectorSpikingNetwork(NeuralNetwork):
     """
-    Two-layer vectorized Leaky Integrate-and-Fire Spiking Neural Network using PyTorch.
+    Multi‑layer vectorized Leaky Integrate‑and‑Fire Spiking Neural Network using PyTorch.
     
     Architecture:
-    Input  (n_in  neurons, rate-coded)
-      ↓  LIF hidden layer
-    Hidden (hidden_size neurons, binary spikes)
-      ↓  LIF output layer
-    Output (n_out neurons, binary spikes → argmax action)
+    Input (rate‑coded) → LIF hidden layer(s) → ... → LIF output layer (binary spikes → argmax action)
 
-    The network is run for `n_steps` internal time-steps per call so that
-    spiking dynamics can accumulate meaningful activity from a single
-    observation vector.
+    The network is run for `n_steps` internal time‑steps per call so that spiking dynamics
+    can accumulate meaningful activity from a single observation vector.
     """
     
-    def __init__(self, num_envs, input_size=100, hidden_size=64, output_size=4, n_steps=5, device='cuda'):
+    def __init__(self, num_envs, input_size=100, hidden_sizes=[64], output_size=4, n_steps=5, device='cuda'):
+        """
+        Parameters
+        ----------
+        num_envs : int
+            Number of parallel agents
+        input_size : int
+            Input dimension (number of lidar rays)
+        hidden_sizes : list of int
+            Number of neurons in each hidden LIF layer (e.g., [64] or [64, 32])
+        output_size : int
+            Number of output neurons (actions)
+        n_steps : int
+            Number of internal simulation steps per forward call
+        device : str
+            Device to run on ('cuda' or 'cpu')
+        """
         self._num_envs = num_envs
         self._input_size = input_size
-        self.hidden_size = hidden_size
+        self.hidden_sizes = hidden_sizes if isinstance(hidden_sizes, list) else [hidden_sizes]
         self._output_size = output_size
         self.n_steps = n_steps
         self.device = device
-        self.hidden_layer = VectorLIFLayer(num_envs, input_size, hidden_size, device=device)
-        self.output_layer = VectorLIFLayer(num_envs, hidden_size, output_size, device=device)
+        
+        # Build layers: input -> hidden layer 1 -> hidden layer 2 -> ... -> output
+        self.layers = nn.ModuleList()
+        prev_size = input_size
+        for hsize in self.hidden_sizes:
+            self.layers.append(VectorLIFLayer(num_envs, prev_size, hsize, device=device))
+            prev_size = hsize
+        # Output layer (action neurons)
+        self.layers.append(VectorLIFLayer(num_envs, prev_size, output_size, device=device))
     
     @property
     def input_size(self) -> int:
@@ -262,14 +280,13 @@ class VectorSpikingNetwork(NeuralNetwork):
     def to(self, device):
         """Move network to specified device."""
         self.device = device
-        self.hidden_layer = self.hidden_layer.to(device)
-        self.output_layer = self.output_layer.to(device)
+        for layer in self.layers:
+            layer.to(device)
         return self
 
     def forward(self, obs: torch.Tensor) -> torch.Tensor:
         """
-        Run the SNN for `n_steps` time-steps and return accumulated output
-        spike counts (one value per action neuron).
+        Run the SNN for `n_steps` time‑steps and return accumulated output spike counts.
 
         Parameters
         ----------
@@ -281,30 +298,29 @@ class VectorSpikingNetwork(NeuralNetwork):
         spike_counts : (num_envs, output_size) tensor
                        Larger value → neuron fired more → preferred action.
         """
-        spike_counts = torch.zeros(self.num_envs, self.output_layer.n_out, device=self.device)
+        spike_counts = torch.zeros(self.num_envs, self._output_size, device=self.device)
         for _ in range(self.n_steps):
             # Poisson / rate encoding: spike with probability = input value
             encoded = (torch.rand_like(obs) < obs).float()
-            h_spikes = self.hidden_layer.forward(encoded)
-            o_spikes = self.output_layer.forward(h_spikes)
-            spike_counts += o_spikes
+            x = encoded
+            for layer in self.layers:
+                x = layer.forward(x)
+            spike_counts += x   # x after output layer contains spikes
         return spike_counts
 
     def reset_state(self):
         """Reset all neuron membrane potentials (call between episodes)."""
-        self.hidden_layer.reset_state()
-        self.output_layer.reset_state()
+        for layer in self.layers:
+            layer.reset_state()
 
     def get_weights(self) -> torch.Tensor:
         """Return (num_envs, total_params) tensor."""
-        h_weights = self.hidden_layer.get_weights()   # (num_envs, h_params)
-        o_weights = self.output_layer.get_weights()   # (num_envs, o_params)
-        return torch.cat([h_weights, o_weights], dim=1)
+        return torch.cat([layer.get_weights() for layer in self.layers], dim=1)
 
     def set_weights(self, weights: torch.Tensor):
         """Set from (num_envs, total_params) tensor."""
-        h_size = self.hidden_layer._total_params
-        h_weights = weights[:, :h_size]
-        o_weights = weights[:, h_size:]
-        self.hidden_layer.set_weights(h_weights)
-        self.output_layer.set_weights(o_weights)
+        start = 0
+        for layer in self.layers:
+            w_size = layer._total_params
+            layer.set_weights(weights[:, start:start + w_size])
+            start += w_size

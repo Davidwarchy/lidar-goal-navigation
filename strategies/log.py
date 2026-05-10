@@ -45,6 +45,7 @@ class StrategyLoggingMixin:
         self.trial_metadata = {
             "run_datetime": datetime.now().isoformat(),
             "strategy_name": self.name,
+            "strategy_parameters": env.strategy_parameters,
             "trial_number": trial_num,
             "total_trials": total_trials,
             "max_generations": max_generations,

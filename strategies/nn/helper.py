@@ -24,17 +24,17 @@ def create_vector_neural_network(network_type: str, num_envs: int, input_size: i
     device : str
         Device to run on ('cuda' or 'cpu')
     **kwargs : additional parameters
-        For spiking: hidden_size (default 64), n_steps (default 5)
-        For feedforward: hidden_sizes (default [64])
+        For spiking: hidden_sizes (list of int, default [64]), n_steps (int, default 5)
+        For feedforward: hidden_sizes (list of int, default [64])
     
     Returns:
     --------
     NeuralNetwork instance
     """
     if network_type == "spiking":
-        hidden_size = kwargs.get("hidden_size", 64)
+        hidden_sizes = kwargs.get("hidden_sizes", [64])
         n_steps = kwargs.get("n_steps", 5)
-        return VectorSpikingNetwork(num_envs, input_size, hidden_size, output_size, n_steps, device)
+        return VectorSpikingNetwork(num_envs, input_size, hidden_sizes, output_size, n_steps, device)
     
     elif network_type == "feedforward":
         hidden_sizes = kwargs.get("hidden_sizes", [64])

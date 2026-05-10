@@ -189,6 +189,7 @@ class VectorRobotExplorationEnv:
         metadata = {
             "run_datetime": datetime.now().isoformat(),
             "strategy_name": self.strategy_name,
+            "strategy_parameters": self.strategy_parameters,
             "num_envs": self.num_envs,
             "max_steps": self.max_steps,
             "continue_after_goal": self.continue_after_goal,
