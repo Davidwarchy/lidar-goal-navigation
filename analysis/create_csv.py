@@ -1,3 +1,6 @@
+"""
+It scans the main experiments directory, identifies all top-level experiment parameters (such as action, max_steps, or other hyperparameters), and recursively traverses their subfolders to locate individual trial result files ending in summary.csv. From each discovered trial, it extracts useful metadata directly from the folder hierarchy, including:
+"""
 import os
 import pandas as pd
 import glob

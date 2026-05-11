@@ -42,7 +42,7 @@ Time pressure (max steps) - 100, 500, 1_000, 10_000 (**Done on OMEN**)
 ## Other factors 
 
 - Robot size - 1, 3, 5 (**David - Done on OMEN**)
-- Cirriculum learning - on, off (**David**)
+- Curriculum learning - on, off (random_nn **David - Running on Omen**, spiking **Running on Kaggle - davidwarchy**)
 - Population - 100, 1_000, 10_000 (**Done on David PC**)
 
 --- 
