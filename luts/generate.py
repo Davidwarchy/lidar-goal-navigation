@@ -82,12 +82,36 @@ def generate_3d_lidar_lut(image_path, num_angles=360, ray_length=200, output_dir
 
 if __name__ == "__main__":
     import argparse
+    import glob
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
+    parser.add_argument("--images_dir", type=str, default="environments/images")
+    parser.add_argument("--num_angles", type=int, default=360)
     args = parser.parse_args()
-    
+
     if args.device == "cuda" and not torch.cuda.is_available():
         print("CUDA not available, using CPU")
         args.device = "cpu"
-    
-    generate_3d_lidar_lut("environments/images/6.png", num_angles=360, device=args.device)
+
+    # Find all png/jpg/jpeg files
+    image_extensions = ["*.png", "*.jpg", "*.jpeg"]
+    image_files = []
+    for ext in image_extensions:
+        image_files.extend(glob.glob(os.path.join(args.images_dir, ext)))
+
+    if not image_files:
+        print(f"No images found in {args.images_dir}")
+        exit()
+
+    print(f"Found {len(image_files)} environment images")
+
+    for image_path in tqdm(image_files, desc="Generating LUTs", unit="env"):
+        try:
+            generate_3d_lidar_lut(
+                image_path=image_path,
+                num_angles=args.num_angles,
+                device=args.device
+            )
+        except Exception as e:
+            print(f"Failed on {image_path}: {e}")
