@@ -5,6 +5,9 @@ import os
 
 # Base directory where CSV files are located
 EXPERIMENTS_DIR = "output/experiments"
+OUTPUT_DIR = "output/experiments/plots-sd"
+# Create output directory if it doesn't exist
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Function to clean success_rate_percent
 def clean_success_rate(val):
@@ -43,7 +46,7 @@ for csv_file, df in dataframes.items():
     param_name = csv_file.replace('.csv', '')
     
     # Plot success_rate_percent over generations
-    sns.lineplot(data=df, x='generation', y='success_rate_percent', hue='parameter_value')
+    sns.lineplot(data=df, x='generation', y='success_rate_percent', hue='parameter_value', errorbar='sd')
     
     # Set titles and labels
     plt.title(f'Performance Comparison: {param_name}', fontsize=14)
@@ -54,10 +57,10 @@ for csv_file, df in dataframes.items():
     plt.tight_layout()
     
     # Save figure in the experiments directory
-    output_path = os.path.join(EXPERIMENTS_DIR, f'{param_name}_plot.png')
+    output_path = os.path.join(OUTPUT_DIR, f'{param_name}_plot.png')
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
     
     print(f"Saved: {output_path}")
 
-print(f"\nDone! Plots saved to {EXPERIMENTS_DIR}")
+print(f"\nDone! Plots saved to {OUTPUT_DIR}")

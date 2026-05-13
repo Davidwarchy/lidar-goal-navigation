@@ -149,6 +149,16 @@ experiments
 
 ```
 
+# Some Really Good Graphics 
+https://claude.ai/chat/9cc77186-7779-4ec8-bec1-9a3e653fee5b
+https://claude.ai/chat/4aa79695-0636-4a1d-8327-a13cdf864f87 
+https://chat.deepseek.com/a/chat/s/75b97c66-7819-4a06-9d84-44746e0dd1a4
+https://chatgpt.com/c/6a018f49-f60c-83ea-8138-e04163a4f708
+https://gemini.google.com/app/ca8f98f7ae1fccc2
+
+# Titles 
+https://gemini.google.com/app/caac48a361be4d4f - Emergent Spatial Self-Awareness: Evolving Navigation Strategies from Raw Sensorimotor Experience without Supervision
+
 # To-do 
 Try do pending experiment for spiking_nn with a 10_000 population. It was taking too long on my (David's) computer. 
 

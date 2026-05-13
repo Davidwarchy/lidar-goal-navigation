@@ -1,3 +1,10 @@
 {
-    "python-envs.defaultEnvManager": "ms-python.python:system"
+    "python-envs.defaultEnvManager": "ms-python.python:system",
+
+    "search.exclude": {
+        "**/output/**": true
+    },
+    "files.watcherExclude": {
+        "**/output/**": true
+    }
 }
