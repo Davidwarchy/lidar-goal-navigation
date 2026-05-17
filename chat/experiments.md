@@ -47,3 +47,6 @@ But these constraints are important. What happens without constraints:
 - Would teleport the robot across the map in one step
 - Breaks collision detection (skips over walls)
 - Makes the simulation unstable/nonsensical
+
+## Check These 
+- https://www.blackwellpublishing.com/ridley/classictexts/wright.pdf
