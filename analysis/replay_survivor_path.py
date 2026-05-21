@@ -2,12 +2,12 @@
 replay_paths.py  –  Visualise saved survivor/failure paths from sampled_paths.npz
 
 Usage:
-    python analysis/neural_nets/replay_paths.py \\
-        --npz  output/<run>/trial_1/gen_25/sampled_paths.npz \\
-        --map  environments/images/6.png \\
-        [--robot_radius 5] \\
-        [--scale 2] \\
-        [--fps 60] \\
+    python analysis/neural_nets/replay_paths.py \
+        --npz  output/<run>/trial_1/gen_25/sampled_paths.npz \
+        --map  environments/images/6.png \
+        [--robot_radius 5] \
+        [--scale 2] \
+        [--fps 60] \
         [--robot_index 0]        # optional: replay only one robot (0-indexed into the npz)
 
 Controls during playback:
@@ -37,21 +37,43 @@ COLOUR_TRAIL_FAIL  = (220,  60,  60)   # red trail for failures
 COLOUR_ROBOT_SURV  = (0,   140, 255)   # blue robot body  (survivor)
 COLOUR_ROBOT_FAIL  = (255, 140,   0)   # orange robot body (failure)
 COLOUR_HEADING     = (255,   0,   0)   # heading arrow
-COLOUR_GOAL        = (0,   255,   0)   # goal ring
+COLOUR_GOAL        = (0,   255,   0)   # goal ring (bright green)
+COLOUR_GOAL_INNER  = (100, 255, 100)   # inner circle (lighter green)
+COLOUR_GOAL_CENTER = (255, 255, 255)   # center bullseye
 COLOUR_TEXT_SURV   = (0,   180,  60)
 COLOUR_TEXT_FAIL   = (200,  40,  40)
 COLOUR_TEXT_UI     = (30,   30,  30)
 
 
 def load_data(npz_path):
+    """Load npz file with paths, labels, and optionally goal positions."""
     data = np.load(npz_path, allow_pickle=True)
     paths  = data["paths"]    # (steps, n_robots, 3)  x / y / orientation
     labels = data["labels"]   # (n_robots,)  "survivor" | "failure"
     indices = data["indices"] # original population indices
-    return paths, labels, indices
+    
+    # Try to load goal positions (may not be present in older files)
+    try:
+        goal_x = data["goal_x"]
+        goal_y = data["goal_y"]
+        has_goals = True
+    except KeyError:
+        print("Warning: No goal positions found in npz file. Goal won't be displayed.")
+        goal_x = None
+        goal_y = None
+        has_goals = False
+    
+    # Try to load success_steps if available
+    try:
+        success_steps = data["success_steps"]
+    except KeyError:
+        success_steps = None
+    
+    return paths, labels, indices, goal_x, goal_y, success_steps, has_goals
 
 
 def load_map(map_path, scale):
+    """Load and scale map image."""
     img = cv2.imread(map_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise FileNotFoundError(f"Cannot load map: {map_path}")
@@ -68,8 +90,8 @@ def make_map_surface(pygame, rgb, scale):
     return pygame.transform.scale(surf, (w * scale, h * scale))
 
 
-def draw_frame(screen, pygame, map_surf, paths, labels, robot_idx, step,
-               scale, robot_radius, font, show_trail=True):
+def draw_frame(screen, pygame, map_surf, paths, labels, goal_x, goal_y, success_steps,
+               robot_idx, step, scale, robot_radius, font, show_trail=True):
     """Draw one frame for robot `robot_idx` at time `step`."""
     screen.blit(map_surf, (0, 0))
 
@@ -79,6 +101,24 @@ def draw_frame(screen, pygame, map_surf, paths, labels, robot_idx, step,
     robot_colour = COLOUR_ROBOT_SURV if is_surv else COLOUR_ROBOT_FAIL
     text_colour  = COLOUR_TEXT_SURV  if is_surv else COLOUR_TEXT_FAIL
 
+    # --- Goal marker (if goal coordinates available) ---
+    if goal_x is not None and goal_y is not None:
+        # Get goal position for this specific robot
+        gx_scaled = int(goal_x[robot_idx] * scale)
+        gy_scaled = int(goal_y[robot_idx] * scale)
+        radius = int(robot_radius * scale * 1.5)  # Make goal slightly larger than robot
+        
+        # Outer ring (bright green)
+        pygame.draw.circle(screen, COLOUR_GOAL, (gx_scaled, gy_scaled), radius, 3)
+        # Inner circle (lighter green) - only if radius is large enough
+        if radius >= 6:
+            pygame.draw.circle(screen, COLOUR_GOAL_INNER, (gx_scaled, gy_scaled), max(3, radius // 2))
+            # Center bullseye
+            pygame.draw.circle(screen, COLOUR_GOAL_CENTER, (gx_scaled, gy_scaled), max(2, radius // 4))
+        else:
+            # Small goal: just a filled circle
+            pygame.draw.circle(screen, COLOUR_GOAL, (gx_scaled, gy_scaled), max(2, radius // 2))
+
     x_hist = paths[:step + 1, robot_idx, 0] * scale
     y_hist = paths[:step + 1, robot_idx, 1] * scale
 
@@ -86,12 +126,6 @@ def draw_frame(screen, pygame, map_surf, paths, labels, robot_idx, step,
     if show_trail and len(x_hist) >= 2:
         pts = list(zip(x_hist.astype(int), y_hist.astype(int)))
         pygame.draw.lines(screen, trail_colour, False, pts, 2)
-
-    # --- Goal marker (use start position of robot as reference —
-    #     goal coords aren't stored in the npz, so we mark the final
-    #     position of survivors as a proxy, or skip for failures) ---
-    # NOTE: if you want to save goal_x/goal_y into the npz, add them
-    #       in the save block in _run_single_trial and draw a circle here.
 
     # --- Robot body at current step ---
     cx = int(paths[step, robot_idx, 0] * scale)
@@ -110,9 +144,23 @@ def draw_frame(screen, pygame, map_surf, paths, labels, robot_idx, step,
     # --- HUD ---
     total_steps = paths.shape[0]
     n_robots    = paths.shape[1]
+    
+    # Distance to goal (if available)
+    dist_to_goal_str = ""
+    if goal_x is not None and goal_y is not None:
+        dx = paths[step, robot_idx, 0] - goal_x[robot_idx]
+        dy = paths[step, robot_idx, 1] - goal_y[robot_idx]
+        dist = math.sqrt(dx*dx + dy*dy)
+        dist_to_goal_str = f" | dist to goal: {dist:.1f}"
+    
+    # Success info (if available)
+    success_str = ""
+    if success_steps is not None and success_steps[robot_idx] > 0:
+        success_str = f" | SUCCESS at step {int(success_steps[robot_idx])}"
+    
     hud_lines = [
         f"Robot {robot_idx + 1}/{n_robots}  |  pop index: {robot_idx}",
-        f"Label: {label.upper()}",
+        f"Label: {label.upper()}{dist_to_goal_str}{success_str}",
         f"Step: {step + 1}/{total_steps}",
         "SPACE=pause  N/P=next/prev  Q=quit",
     ]
@@ -128,7 +176,7 @@ def replay(npz_path, map_path, robot_radius=5, scale=2, fps=60,
            robot_index=None):
     import pygame
 
-    paths, labels, indices = load_data(npz_path)
+    paths, labels, indices, goal_x, goal_y, success_steps, has_goals = load_data(npz_path)
     rgb, map_w, map_h = load_map(map_path, scale)
 
     total_steps = paths.shape[0]
@@ -138,7 +186,7 @@ def replay(npz_path, map_path, robot_radius=5, scale=2, fps=60,
     win_w = map_w * scale
     win_h = map_h * scale
     screen = pygame.display.set_mode((win_w, win_h))
-    pygame.display.set_caption("Path Replay")
+    pygame.display.set_caption("Path Replay" + (" (with goal)" if has_goals else ""))
     clock  = pygame.time.Clock()
     font   = pygame.font.SysFont("monospace", 14)
 
@@ -156,6 +204,17 @@ def replay(npz_path, map_path, robot_radius=5, scale=2, fps=60,
     step     = 0
     paused   = False
     running  = True
+
+    # Print info about loaded data
+    print(f"\n=== Replay Info ===")
+    print(f"Total steps: {total_steps}")
+    print(f"Number of robots: {n_robots}")
+    print(f"Labels: {dict(zip(range(len(labels)), labels))}")
+    if has_goals:
+        print(f"Goal positions available (will be displayed as green rings)")
+    else:
+        print(f"No goal positions in file (only paths)")
+    print("==================\n")
 
     while running:
         robot_idx = robot_order[ri]
@@ -179,7 +238,8 @@ def replay(npz_path, map_path, robot_radius=5, scale=2, fps=60,
                 elif event.key == pygame.K_LEFT and paused:
                     step = max(step - 1, 0)
 
-        draw_frame(screen, pygame, map_surf, paths, labels,
+        draw_frame(screen, pygame, map_surf, paths, labels, 
+                   goal_x, goal_y, success_steps,
                    robot_idx, step, scale, robot_radius, font)
 
         if not paused:
@@ -188,6 +248,8 @@ def replay(npz_path, map_path, robot_radius=5, scale=2, fps=60,
                 # Auto-advance to next robot at end of path
                 step = 0
                 ri = (ri + 1) % len(robot_order)
+                # Print when switching robots
+                print(f"Switching to robot {robot_order[ri]}: {labels[robot_order[ri]]}")
 
         clock.tick(fps)
 
