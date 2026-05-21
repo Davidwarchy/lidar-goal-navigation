@@ -417,9 +417,12 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
 
             np.savez_compressed(
                 os.path.join(gen_dir, "sampled_paths.npz"),
-                paths   = sampled,
-                labels  = np.array(labels),
-                indices = sampled_indices.cpu().numpy(),
+                paths         = sampled,
+                labels        = np.array(labels),
+                indices       = sampled_indices.cpu().numpy(),
+                goal_x        = env.goal_x[sampled_indices].cpu().numpy(),
+                goal_y        = env.goal_y[sampled_indices].cpu().numpy(),
+                success_steps = success_steps[sampled_indices].cpu().numpy(),  # -1 for failures
             )
             del path_buffer
         # ─────────────────────────────────────────────────────────────────────
