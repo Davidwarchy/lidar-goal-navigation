@@ -314,7 +314,7 @@ if __name__ == "__main__":
 # python main.py --strategy random --max_steps 1000 --population 10 --env 6.png
 # python main.py --strategy random --env 6.png --max_steps 100000 --continue_after_goal --population 10
 # --- SPIKING --- 
-# python main.py --strategy spiking --trials 50 --generations 50 --population 100 --max_steps 1000 --env 6.png
+# python main.py --strategy spiking --trials 1 --generations 10 --population 1000 --max_steps 1000 --env 6.png
 #
 # --- PROFILING ---
 # python -m cProfile -s tottime main.py --strategy random --env 6.png --max_steps 100_000 --continue_after_goal --population 10 > xprofile.txt

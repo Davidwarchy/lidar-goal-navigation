@@ -263,7 +263,13 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
     gen_pbar = tqdm(range(1, strategy_params['max_gens'] + 1),
                     desc=f"Trial {trial_idx}/{strategy_params['num_trials']}",
                     unit="gen", position=0)
-    
+
+    # ── Path recording constants ──────────────────────────────────────────────
+    SAVE_PATH_EVERY_N_GENS = 1
+    SAVE_N_SURVIVORS = 5
+    SAVE_N_FAILURES  = 5
+    # ─────────────────────────────────────────────────────────────────────────
+
     for gen in gen_pbar:
         gen_dir = os.path.join(trial_dir, f"gen_{gen}")
         os.makedirs(gen_dir, exist_ok=True)
@@ -302,6 +308,18 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
         success_steps = torch.full((strategy_params['population_size'],), -1, dtype=torch.long, device=device)
         success_energy = torch.full((strategy_params['population_size'],), -1.0, dtype=torch.float32, device=device)
         success_health = torch.full((strategy_params['population_size'],), -1.0, dtype=torch.float32, device=device)
+
+        # ── Path recording: pre-allocate GPU buffer ───────────────────────────
+        # Shape: (max_steps, pop_size, 3) where last dim is [x, y, orientation]
+        # Stays on GPU the whole episode — one CPU transfer at the end.
+        should_save_paths = (gen % SAVE_PATH_EVERY_N_GENS == 0) or (gen == strategy_params['max_gens'])
+        if should_save_paths:
+            path_buffer = torch.zeros(
+                (env_params['max_steps'], strategy_params['population_size'], 3),
+                dtype=torch.float32,
+                device=device
+            )
+        # ─────────────────────────────────────────────────────────────────────
         
         # Main evaluation loop – wrapped in no_grad to prevent graph buildup
         with torch.no_grad():
@@ -348,6 +366,13 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
                 # Step environment – actions are already GPU tensors
                 obs, rewards, dones, info = env.step(actions, action_space=strategy_params['action_space'])
                 steps += 1
+
+                # ── Path recording: write directly into GPU buffer ────────────
+                if should_save_paths:
+                    path_buffer[steps - 1, :, 0] = env.robot_x
+                    path_buffer[steps - 1, :, 1] = env.robot_y
+                    path_buffer[steps - 1, :, 2] = env.robot_orientation
+                # ─────────────────────────────────────────────────────────────
                 
                 # GPU‑only goal tracking
                 goal_reached = info["goal_reached"]
@@ -371,7 +396,35 @@ def _run_single_trial(strategy_instance, trial_idx, strategy_params, env_params,
                     break
         
         gen_duration = time.time() - gen_start_time
-        
+
+        # ── Path recording: sample survivors/failures & save ─────────────────
+        if should_save_paths:
+            survivor_indices = torch.where(reached_goal)[0]
+            failure_indices  = torch.where(~reached_goal)[0]
+
+            n_surv = min(SAVE_N_SURVIVORS, len(survivor_indices))
+            n_fail = min(SAVE_N_FAILURES,  len(failure_indices))
+
+            sampled_survivors = survivor_indices[torch.randperm(len(survivor_indices))[:n_surv]]
+            sampled_failures  = failure_indices [torch.randperm(len(failure_indices)) [:n_fail]]
+
+            sampled_indices = torch.cat([sampled_survivors, sampled_failures])
+            labels = (["survivor"] * n_surv) + (["failure"] * n_fail)
+
+            # Single CPU transfer — only the sampled robots, only actual steps
+            sampled = path_buffer[:steps, sampled_indices, :].cpu().numpy()
+            # shape: (actual_steps, n_robots, 3)  →  [..., 0]=x  [..., 1]=y  [..., 2]=orientation
+
+            np.savez_compressed(
+                os.path.join(gen_dir, "sampled_paths.npz"),
+                paths   = sampled,
+                labels  = np.array(labels),
+                indices = sampled_indices.cpu().numpy(),
+            )
+            del path_buffer
+        # ─────────────────────────────────────────────────────────────────────
+
+
         # --- Curriculum Logic (if enabled) ---
         curriculum_active = (strategy_params['network_type'] in ["feedforward", "spiking"] 
                             and strategy_params['curriculum_enabled'])
